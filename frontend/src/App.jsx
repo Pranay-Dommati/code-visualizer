@@ -51,7 +51,7 @@ function App() {
     }
   }, []);
 
-  // Run the actual trace
+  // Run the actual trace with streaming
   const runTrace = useCallback(async (inputValues = [], metadata = null) => {
     setIsRunning(true);
     setError(null);
@@ -66,13 +66,14 @@ function App() {
     
     // Animate through loading phases
     setLoadingPhase(1); // Reading code
-    await new Promise(resolve => setTimeout(resolve, 800));
+    await new Promise(resolve => setTimeout(resolve, 400));
     setLoadingPhase(2); // Analyzing
-    await new Promise(resolve => setTimeout(resolve, 800));
+    await new Promise(resolve => setTimeout(resolve, 400));
     setLoadingPhase(3); // Preparing
     
     try {
-      const response = await fetch(`${API_BASE_URL}/trace`, {
+      // Use the streaming endpoint
+      const response = await fetch(`${API_BASE_URL}/trace-stream`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
@@ -85,31 +86,105 @@ function App() {
         })
       });
       
-      const data = await response.json();
+      // Check if it's a streaming response
+      const contentType = response.headers.get('content-type');
       
-      setLoadingPhase(4); // Starting
-      await new Promise(resolve => setTimeout(resolve, 500));
-      
-      if (data.success && data.frames && data.frames.length > 0) {
-        // Transform frames to match our visualization format
-        const transformedSteps = data.frames.map(frame => ({
-          lineNumber: frame.line,
-          code: frame.code,
-          explanation: frame.explanation,
-          variables: frame.locals,
-          changedVars: frame.changed_vars || [],
-          event: frame.event,
-          functionName: frame.function_name,
-          output: data.output
-        }));
+      if (contentType && contentType.includes('text/event-stream')) {
+        // Handle streaming response
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        let receivedFirstFrame = false;
         
-        setSteps(transformedSteps);
-        setIsLoadingTrace(false);
+        while (true) {
+          const { done, value } = await reader.read();
+          
+          if (done) break;
+          
+          buffer += decoder.decode(value, { stream: true });
+          
+          // Process complete SSE messages
+          const lines = buffer.split('\n\n');
+          buffer = lines.pop() || ''; // Keep incomplete message in buffer
+          
+          for (const line of lines) {
+            if (line.startsWith('data: ')) {
+              try {
+                const data = JSON.parse(line.slice(6));
+                
+                if (data.type === 'error') {
+                  setError(data.error);
+                  setSteps([]);
+                  setShowVisualizer(false);
+                  setIsLoadingTrace(false);
+                  setIsRunning(false);
+                  return;
+                }
+                
+                if (data.type === 'metadata') {
+                  setLoadingPhase(4); // Starting
+                }
+                
+                if (data.type === 'frame') {
+                  // Stop loading state on first frame
+                  if (!receivedFirstFrame) {
+                    receivedFirstFrame = true;
+                    setIsLoadingTrace(false);
+                  }
+                  
+                  const frame = data.frame;
+                  const transformedStep = {
+                    lineNumber: frame.line,
+                    code: frame.code,
+                    explanation: frame.explanation,
+                    variables: frame.locals,
+                    changedVars: frame.changed_vars || [],
+                    event: frame.event,
+                    functionName: frame.function_name,
+                    output: frame.output
+                  };
+                  
+                  // Add step progressively
+                  setSteps(prev => [...prev, transformedStep]);
+                }
+                
+                if (data.type === 'complete') {
+                  // All frames received
+                  setIsLoadingTrace(false);
+                }
+              } catch (parseError) {
+                console.error('Failed to parse SSE data:', parseError);
+              }
+            }
+          }
+        }
       } else {
-        setError(data.error || 'Failed to trace code');
-        setSteps([]);
-        setShowVisualizer(false);
-        setIsLoadingTrace(false);
+        // Fall back to regular JSON response
+        const data = await response.json();
+        
+        setLoadingPhase(4); // Starting
+        await new Promise(resolve => setTimeout(resolve, 300));
+        
+        if (data.success && data.frames && data.frames.length > 0) {
+          const transformedSteps = data.frames.map(frame => ({
+            lineNumber: frame.line,
+            code: frame.code,
+            explanation: frame.explanation,
+            variables: frame.locals,
+            changedVars: frame.changed_vars || [],
+            event: frame.event,
+            functionName: frame.function_name,
+            output: data.output
+          }));
+          
+          setSteps(transformedSteps);
+          setIsLoadingTrace(false);
+        } else {
+          setError(data.error || 'Failed to trace code');
+          setSteps([]);
+          setShowVisualizer(false);
+          setIsLoadingTrace(false);
+        }
       }
     } catch (err) {
       setError(`Connection error: ${err.message}. Make sure the backend is running.`);

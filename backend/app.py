@@ -10,7 +10,7 @@ Endpoints:
 - GET /api/health - Health check
 """
 
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, Response
 from flask_cors import CORS
 from tracer import trace_code
 from sandbox import validate_code
@@ -18,6 +18,7 @@ from ai_narrator import get_narrator, generate_narration
 import json
 import ast
 import re
+import time
 
 app = Flask(__name__)
 
@@ -448,6 +449,118 @@ print(f"Result: {{_result}}")
             "error": f"Server error: {str(e)}",
             "frames": [],
             "output": ""
+        }), 500
+
+
+@app.route('/api/trace-stream', methods=['POST'])
+def trace_stream_endpoint():
+    """
+    Trace Python code execution and stream frames one by one using Server-Sent Events.
+    This allows the frontend to display frames as they are processed.
+    """
+    try:
+        data = request.get_json()
+        
+        if not data or 'code' not in data:
+            return jsonify({
+                "success": False,
+                "error": "Missing 'code' in request body"
+            }), 400
+        
+        code = data['code']
+        input_values = data.get('inputs', [])
+        code_type = data.get('codeType', 'script')
+        function_name = data.get('functionName')
+        class_name = data.get('className')
+        
+        if not isinstance(code, str) or not code.strip():
+            return jsonify({
+                "success": False,
+                "error": "Invalid or empty code"
+            }), 400
+        
+        # Validate first
+        is_valid, validation_error = validate_code(code)
+        if not is_valid:
+            return jsonify({
+                "success": False,
+                "error": validation_error
+            }), 400
+        
+        # Prepare the code for execution based on type
+        executable_code = code
+        
+        if code_type == "class_method" and class_name and function_name:
+            param_values = parse_input_values(input_values, data.get('inputTypes', []))
+            params_str = ', '.join(param_values)
+            executable_code = f"""{code}
+
+# Auto-generated execution code
+_solution = {class_name}()
+_result = _solution.{function_name}({params_str})
+print(f"Result: {{_result}}")
+"""
+        elif code_type == "function" and function_name:
+            param_values = parse_input_values(input_values, data.get('inputTypes', []))
+            params_str = ', '.join(param_values)
+            executable_code = f"""{code}
+
+# Auto-generated execution code
+_result = {function_name}({params_str})
+print(f"Result: {{_result}}")
+"""
+        
+        # Trace the code
+        result = trace_code(executable_code, input_values if code_type == "script" else [])
+        
+        def generate_stream():
+            if not result.get('success'):
+                yield f"data: {json.dumps({'type': 'error', 'error': result.get('error', 'Unknown error')})}\n\n"
+                return
+            
+            frames = result.get('frames', [])
+            source_lines = result.get('source_lines', [])
+            output = result.get('output', '')
+            
+            # Send metadata first
+            yield f"data: {json.dumps({'type': 'metadata', 'totalFrames': len(frames), 'output': output, 'sourceLines': source_lines})}\n\n"
+            
+            # Stream each frame with AI narration
+            for i, frame in enumerate(frames):
+                # Generate AI narration for this frame
+                ai_narration = narrator.generate_narration(
+                    step=frame.get('step', 0),
+                    line=frame.get('line', 0),
+                    code=frame.get('code', ''),
+                    event=frame.get('event', 'line'),
+                    variables=frame.get('locals', {}),
+                    changed_vars=frame.get('changed_vars', []),
+                    function_name=frame.get('function_name'),
+                    return_value=frame.get('return_value'),
+                    full_source=source_lines
+                )
+                frame['explanation'] = ai_narration
+                
+                # Send the frame
+                yield f"data: {json.dumps({'type': 'frame', 'index': i, 'frame': frame})}\n\n"
+            
+            # Send completion message
+            yield f"data: {json.dumps({'type': 'complete'})}\n\n"
+        
+        return Response(
+            generate_stream(),
+            mimetype='text/event-stream',
+            headers={
+                'Cache-Control': 'no-cache',
+                'Connection': 'keep-alive',
+                'Access-Control-Allow-Origin': '*'
+            }
+        )
+        
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "error": f"Server error: {str(e)}"
         }), 500
 
 

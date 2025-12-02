@@ -13,36 +13,69 @@ const ImmersiveVisualizer = ({
   const [currentStepIndex, setCurrentStepIndex] = useState(-1);
   const [isPlaying, setIsPlaying] = useState(false);
   const [playbackSpeed, setPlaybackSpeed] = useState(2000); // ms per step
+  const [isStreaming, setIsStreaming] = useState(false); // Track if we're receiving streamed data
   const scrollContainerRef = useRef(null);
   const latestStepRef = useRef(null);
   const playIntervalRef = useRef(null);
+  const prevStepsLengthRef = useRef(0);
 
   // Reset when opened
   useEffect(() => {
-    if (isOpen && steps.length > 0 && !isLoading) {
+    if (isOpen && !isLoading) {
       setVisibleSteps([]);
       setCurrentStepIndex(-1);
-      // Start auto-play after a short delay
-      setTimeout(() => {
-        setIsPlaying(true);
-      }, 500);
+      prevStepsLengthRef.current = 0;
+      // Don't auto-play yet, wait for steps to stream in
     }
-  }, [isOpen, steps, isLoading]);
+  }, [isOpen, isLoading]);
 
-  // Auto-play logic
+  // Handle streaming steps - show them as they arrive
   useEffect(() => {
-    if (isPlaying && currentStepIndex < steps.length - 1) {
+    if (!isOpen || isLoading) return;
+    
+    const newStepsCount = steps.length - prevStepsLengthRef.current;
+    
+    if (newStepsCount > 0) {
+      // New steps have arrived via streaming
+      setIsStreaming(true);
+      
+      // Add the new steps to visible steps
+      const newSteps = steps.slice(prevStepsLengthRef.current);
+      setVisibleSteps(prev => [...prev, ...newSteps]);
+      setCurrentStepIndex(steps.length - 1);
+      
+      prevStepsLengthRef.current = steps.length;
+    }
+  }, [steps, isOpen, isLoading]);
+
+  // Start auto-play after streaming is done (user can still pause/play)
+  useEffect(() => {
+    if (isStreaming && steps.length > 0 && visibleSteps.length === steps.length) {
+      // All steps have been received and shown
+      setIsStreaming(false);
+    }
+  }, [isStreaming, steps.length, visibleSteps.length]);
+
+  // Auto-play logic (for manual playback control after streaming)
+  useEffect(() => {
+    if (isPlaying && !isStreaming && currentStepIndex < steps.length - 1) {
       playIntervalRef.current = setTimeout(() => {
         const nextIndex = currentStepIndex + 1;
         setCurrentStepIndex(nextIndex);
-        setVisibleSteps(prev => [...prev, steps[nextIndex]]);
-      }, currentStepIndex === -1 ? 500 : playbackSpeed);
-    } else if (currentStepIndex >= steps.length - 1) {
+        setVisibleSteps(prev => {
+          // Only add if not already visible
+          if (prev.length <= nextIndex) {
+            return [...prev, steps[nextIndex]];
+          }
+          return prev;
+        });
+      }, currentStepIndex === -1 ? 300 : playbackSpeed);
+    } else if (!isStreaming && currentStepIndex >= steps.length - 1) {
       setIsPlaying(false);
     }
 
     return () => clearTimeout(playIntervalRef.current);
-  }, [isPlaying, currentStepIndex, steps, playbackSpeed]);
+  }, [isPlaying, isStreaming, currentStepIndex, steps, playbackSpeed]);
 
   // Auto-scroll to latest step only if user is near the bottom
   useEffect(() => {
@@ -69,20 +102,27 @@ const ImmersiveVisualizer = ({
         onClose();
       } else if (e.key === ' ') {
         e.preventDefault();
-        setIsPlaying(prev => !prev);
-      } else if (e.key === 'ArrowRight' && !isPlaying) {
+        if (!isStreaming) {
+          setIsPlaying(prev => !prev);
+        }
+      } else if (e.key === 'ArrowRight' && !isPlaying && !isStreaming) {
         // Manual next step
         if (currentStepIndex < steps.length - 1) {
           const nextIndex = currentStepIndex + 1;
           setCurrentStepIndex(nextIndex);
-          setVisibleSteps(prev => [...prev, steps[nextIndex]]);
+          setVisibleSteps(prev => {
+            if (prev.length <= nextIndex) {
+              return [...prev, steps[nextIndex]];
+            }
+            return prev;
+          });
         }
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isOpen, isPlaying, currentStepIndex, steps, onClose]);
+  }, [isOpen, isPlaying, isStreaming, currentStepIndex, steps, onClose]);
 
   const togglePlayPause = () => {
     setIsPlaying(prev => !prev);
@@ -95,7 +135,11 @@ const ImmersiveVisualizer = ({
   const handleRestart = () => {
     setVisibleSteps([]);
     setCurrentStepIndex(-1);
-    setIsPlaying(true);
+    setIsStreaming(false);
+    // Replay all steps one by one with playback
+    setTimeout(() => {
+      setIsPlaying(true);
+    }, 100);
   };
 
   // Get syntax highlighted code line - returns React elements
@@ -292,17 +336,25 @@ const ImmersiveVisualizer = ({
             ))}
           </div>
 
-          {/* Play/Pause */}
+          {/* Play/Pause - disabled during streaming */}
           <button
             onClick={togglePlayPause}
-            disabled={currentStepIndex >= steps.length - 1}
+            disabled={isStreaming || currentStepIndex >= steps.length - 1}
             className={`p-3 rounded-xl transition-all ${
-              isPlaying
+              isStreaming
+                ? 'bg-blue-500 text-white animate-pulse'
+                : isPlaying
                 ? 'bg-teal-500 text-white'
                 : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
-            } ${currentStepIndex >= steps.length - 1 ? 'opacity-50' : ''}`}
+            } ${(isStreaming || currentStepIndex >= steps.length - 1) ? 'opacity-50' : ''}`}
+            title={isStreaming ? 'Receiving steps...' : isPlaying ? 'Pause' : 'Play'}
           >
-            {isPlaying ? (
+            {isStreaming ? (
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="animate-spin">
+                <circle cx="12" cy="12" r="10" strokeOpacity="0.25" />
+                <path d="M12 2a10 10 0 0 1 10 10" />
+              </svg>
+            ) : isPlaying ? (
               <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
                 <rect x="6" y="4" width="4" height="16" rx="1" />
                 <rect x="14" y="4" width="4" height="16" rx="1" />
@@ -317,7 +369,8 @@ const ImmersiveVisualizer = ({
           {/* Restart */}
           <button
             onClick={handleRestart}
-            className="p-3 rounded-xl bg-slate-800 text-slate-300 hover:bg-slate-700 transition-all"
+            disabled={isStreaming}
+            className={`p-3 rounded-xl bg-slate-800 text-slate-300 hover:bg-slate-700 transition-all ${isStreaming ? 'opacity-50' : ''}`}
             title="Restart"
           >
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -328,12 +381,24 @@ const ImmersiveVisualizer = ({
 
           {/* Progress */}
           <div className="flex items-center gap-2 bg-slate-800 rounded-xl px-4 py-2">
+            {isStreaming && (
+              <span className="flex items-center gap-1">
+                <span className="w-2 h-2 bg-blue-400 rounded-full animate-pulse"></span>
+              </span>
+            )}
             <span className="text-sm text-slate-400">Step</span>
             <span className="text-sm font-bold text-teal-400">
-              {Math.max(0, currentStepIndex + 1)}
+              {visibleSteps.length}
             </span>
-            <span className="text-sm text-slate-500">/</span>
-            <span className="text-sm text-slate-400">{steps.length}</span>
+            {!isStreaming && steps.length > 0 && (
+              <>
+                <span className="text-sm text-slate-500">/</span>
+                <span className="text-sm text-slate-400">{steps.length}</span>
+              </>
+            )}
+            {isStreaming && (
+              <span className="text-xs text-blue-400 ml-1">receiving...</span>
+            )}
           </div>
         </div>
       </header>
