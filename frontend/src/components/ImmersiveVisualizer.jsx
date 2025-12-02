@@ -27,6 +27,7 @@ const ImmersiveVisualizer = ({
   const [teacherContextSet, setTeacherContextSet] = useState(false);
   const [isListening, setIsListening] = useState(false);
   const [isVoiceMode, setIsVoiceMode] = useState(false); // Track if current message is voice mode
+  const [isConversationMode, setIsConversationMode] = useState(false); // Continuous voice loop
   
   const scrollContainerRef = useRef(null);
   const latestStepRef = useRef(null);
@@ -39,6 +40,7 @@ const ImmersiveVisualizer = ({
   const isPlayingQueueRef = useRef(false);
   const pendingTextRef = useRef('');
   const displayedTextRef = useRef(''); // For voice mode - text shown so far
+  const shouldAutoListenRef = useRef(false); // Track if we should auto-listen after speaking
 
   // Reset when opened
   useEffect(() => {
@@ -342,6 +344,20 @@ const ImmersiveVisualizer = ({
     };
   }, []);
 
+  // Auto-start listening for conversation mode
+  const autoStartListening = useCallback(() => {
+    if (shouldAutoListenRef.current && !isTeacherThinking) {
+      // Small delay before starting to listen again
+      setTimeout(() => {
+        if (shouldAutoListenRef.current && !isTeacherThinking && !isTeacherSpeaking) {
+          // Trigger startListening
+          const listenEvent = new CustomEvent('autoStartListening');
+          window.dispatchEvent(listenEvent);
+        }
+      }, 500);
+    }
+  }, [isTeacherThinking, isTeacherSpeaking]);
+
   // Play next audio in queue - reveals text in sync with speech
   const playNextInQueue = useCallback(async () => {
     if (audioQueueRef.current.length === 0) {
@@ -358,6 +374,9 @@ const ImmersiveVisualizer = ({
         }
         return newMessages;
       });
+      
+      // Auto-restart listening in conversation mode
+      autoStartListening();
       return;
     }
     
@@ -598,7 +617,7 @@ const ImmersiveVisualizer = ({
     }
   }, [chatInput, isTeacherThinking, currentStepIndex]);
 
-  // Voice input - Start listening
+  // Voice input - Start listening (enables conversation mode)
   const startListening = useCallback(() => {
     if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
       alert('Speech recognition is not supported in your browser. Please use Chrome or Edge.');
@@ -607,6 +626,10 @@ const ImmersiveVisualizer = ({
 
     // Stop any current audio playback
     stopSpeaking();
+    
+    // Enable conversation mode - will auto-listen after AI responds
+    shouldAutoListenRef.current = true;
+    setIsConversationMode(true);
 
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     const recognition = new SpeechRecognition();
@@ -643,8 +666,14 @@ const ImmersiveVisualizer = ({
     recognition.onerror = (event) => {
       console.error('Speech recognition error:', event.error);
       setIsListening(false);
+      // Don't disable conversation mode on error - just stop this session
       if (event.error === 'not-allowed') {
+        shouldAutoListenRef.current = false;
+        setIsConversationMode(false);
         alert('Microphone access was denied. Please allow microphone access to use voice input.');
+      } else if (event.error === 'no-speech') {
+        // No speech detected - in conversation mode, we might want to keep listening
+        // But for now, just wait for next auto-listen
       }
     };
     
@@ -652,11 +681,8 @@ const ImmersiveVisualizer = ({
       setIsListening(false);
       // Auto-send if we got a final transcript
       if (finalTranscriptResult.trim()) {
-        // Use a ref or direct function call to send the message
         setChatInput(finalTranscriptResult.trim());
-        // Trigger send via a small delay to ensure state is updated
         setTimeout(() => {
-          // Manually trigger send by dispatching a custom event
           const sendEvent = new CustomEvent('voiceSendMessage', { detail: finalTranscriptResult.trim() });
           window.dispatchEvent(sendEvent);
         }, 50);
@@ -665,16 +691,31 @@ const ImmersiveVisualizer = ({
     
     recognitionRef.current = recognition;
     recognition.start();
-  }, []);
+  }, [stopSpeaking]);
 
-  // Voice input - Stop listening
+  // Voice input - Stop listening and exit conversation mode
   const stopListening = useCallback(() => {
     if (recognitionRef.current) {
       recognitionRef.current.stop();
       recognitionRef.current = null;
     }
     setIsListening(false);
+    // Disable conversation mode when manually stopping
+    shouldAutoListenRef.current = false;
+    setIsConversationMode(false);
   }, []);
+
+  // Handle auto-listen event
+  useEffect(() => {
+    const handleAutoListen = () => {
+      if (shouldAutoListenRef.current && !isTeacherThinking && !isTeacherSpeaking && !isListening) {
+        startListening();
+      }
+    };
+    
+    window.addEventListener('autoStartListening', handleAutoListen);
+    return () => window.removeEventListener('autoStartListening', handleAutoListen);
+  }, [startListening, isTeacherThinking, isTeacherSpeaking, isListening]);
 
   // Cleanup recognition on unmount
   useEffect(() => {
@@ -682,6 +723,7 @@ const ImmersiveVisualizer = ({
       if (recognitionRef.current) {
         recognitionRef.current.stop();
       }
+      shouldAutoListenRef.current = false;
     };
   }, []);
 
@@ -1417,9 +1459,11 @@ const ImmersiveVisualizer = ({
                       className={`p-2 rounded-lg transition-all ${
                         isListening 
                           ? 'bg-red-500 text-white animate-pulse' 
-                          : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
+                          : isConversationMode
+                            ? 'bg-purple-600 text-white ring-2 ring-purple-400 ring-opacity-50'
+                            : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
                       }`}
-                      title={isListening ? "Stop listening" : "Start voice input"}
+                      title={isListening ? "Stop listening" : isConversationMode ? "Conversation mode active" : "Start voice input"}
                     >
                       {isListening ? (
                         /* Stop icon when listening */
@@ -1439,7 +1483,7 @@ const ImmersiveVisualizer = ({
                   )}
                 </div>
                 
-                {/* Listening indicator */}
+                {/* Listening / Conversation mode indicator */}
                 {isListening && (
                   <div className="flex items-center justify-center gap-2 mt-2 text-xs text-red-400">
                     <span className="flex gap-1">
@@ -1448,6 +1492,31 @@ const ImmersiveVisualizer = ({
                       <span className="w-1.5 h-1.5 bg-red-500 rounded-full animate-bounce" style={{animationDelay: '300ms'}}></span>
                     </span>
                     <span>Listening... Speak now</span>
+                  </div>
+                )}
+                
+                {/* Conversation mode indicator - shows when AI is speaking and will auto-listen */}
+                {isConversationMode && isTeacherSpeaking && !isListening && (
+                  <div className="flex items-center justify-center gap-2 mt-2 text-xs text-purple-400">
+                    <svg className="w-3 h-3 animate-pulse" viewBox="0 0 24 24" fill="currentColor">
+                      <circle cx="12" cy="12" r="10"/>
+                    </svg>
+                    <span>Voice conversation active • Will listen after response</span>
+                  </div>
+                )}
+                
+                {/* Exit conversation mode button */}
+                {isConversationMode && !isListening && !isTeacherSpeaking && !isTeacherThinking && (
+                  <div className="flex items-center justify-center gap-2 mt-2">
+                    <button
+                      onClick={() => {
+                        shouldAutoListenRef.current = false;
+                        setIsConversationMode(false);
+                      }}
+                      className="text-xs px-3 py-1 rounded-full bg-slate-700/50 text-slate-400 hover:bg-slate-700 hover:text-slate-300 transition-all"
+                    >
+                      Exit voice mode
+                    </button>
                   </div>
                 )}
               </div>
