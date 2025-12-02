@@ -7,7 +7,8 @@ const CodeEditor = ({
   autoGenerateInput, 
   setAutoGenerateInput,
   isRunning,
-  currentLine 
+  currentLine,
+  error 
 }) => {
   const lines = code.split('\n');
   
@@ -85,6 +86,18 @@ print(arr)"
 
       {/* Bottom Controls */}
       <div className="px-4 py-4 bg-slate-800/30 border-t border-slate-700">
+        {/* Error Display */}
+        {error && (
+          <div className="mb-4 p-3 bg-red-500/10 border border-red-500/30 rounded-lg flex items-start gap-2">
+            <svg className="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <circle cx="12" cy="12" r="10" />
+              <line x1="12" y1="8" x2="12" y2="12" />
+              <line x1="12" y1="16" x2="12.01" y2="16" />
+            </svg>
+            <p className="text-sm text-red-300">{error}</p>
+          </div>
+        )}
+
         {/* Auto-generate toggle */}
         <div className="flex items-center justify-between mb-4">
           <label className="flex items-center gap-3 cursor-pointer group">
