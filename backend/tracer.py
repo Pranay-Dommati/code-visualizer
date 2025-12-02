@@ -61,6 +61,12 @@ class PythonTracer:
         self.previous_locals: Dict[str, Any] = {}
         self.active: bool = False
         self.error: Optional[str] = None
+        self.code_structure: Dict[str, Any] = {}  # Stores info about classes/functions
+        self.inside_target_function: bool = False
+        self.target_function_name: Optional[str] = None
+        self.target_class_name: Optional[str] = None
+        self.function_start_line: int = 0
+        self.function_end_line: int = 0
         
     def _safe_copy(self, value: Any) -> Any:
         """
@@ -115,6 +121,9 @@ class PythonTracer:
             # Skip private/internal variables
             if name.startswith('_') or name.startswith('@'):
                 continue
+            # Skip 'self' - not relevant for algorithm understanding
+            if name == 'self':
+                continue
             # Skip modules and functions
             if callable(value) or str(type(value)).startswith("<class 'module"):
                 continue
@@ -147,6 +156,132 @@ class PythonTracer:
         if 0 < line_no <= len(self.source_lines):
             return self.source_lines[line_no - 1].rstrip()
         return ""
+    
+    def _analyze_code_structure(self, code: str) -> None:
+        """
+        Analyze the code to identify classes, functions, and the main algorithm.
+        This helps filter out boilerplate like class definitions, object instantiation, etc.
+        """
+        try:
+            tree = ast.parse(code)
+            
+            for node in ast.walk(tree):
+                # Find class definitions
+                if isinstance(node, ast.ClassDef):
+                    class_name = node.name
+                    self.code_structure['class'] = {
+                        'name': class_name,
+                        'start_line': node.lineno,
+                        'end_line': node.end_lineno or node.lineno
+                    }
+                    
+                    # Find methods inside the class
+                    for item in node.body:
+                        if isinstance(item, ast.FunctionDef):
+                            # Skip __init__ and other dunder methods for algorithm focus
+                            if not item.name.startswith('__'):
+                                self.code_structure['main_function'] = {
+                                    'name': item.name,
+                                    'class': class_name,
+                                    'start_line': item.lineno,
+                                    'end_line': item.end_lineno or item.lineno,
+                                    'body_start': item.body[0].lineno if item.body else item.lineno
+                                }
+                                self.target_function_name = item.name
+                                self.target_class_name = class_name
+                                self.function_start_line = item.body[0].lineno if item.body else item.lineno
+                                self.function_end_line = item.end_lineno or item.lineno
+                                break
+                                
+                # Find standalone functions (not in a class)
+                elif isinstance(node, ast.FunctionDef) and 'main_function' not in self.code_structure:
+                    if not node.name.startswith('_'):  # Skip private functions
+                        self.code_structure['main_function'] = {
+                            'name': node.name,
+                            'class': None,
+                            'start_line': node.lineno,
+                            'end_line': node.end_lineno or node.lineno,
+                            'body_start': node.body[0].lineno if node.body else node.lineno
+                        }
+                        self.target_function_name = node.name
+                        self.function_start_line = node.body[0].lineno if node.body else node.lineno
+                        self.function_end_line = node.end_lineno or node.lineno
+                        
+        except SyntaxError:
+            # If parsing fails, we'll trace everything
+            pass
+    
+    def _is_boilerplate_line(self, line_no: int, func_name: str, event: str) -> bool:
+        """
+        Determine if a line is boilerplate that should be filtered out.
+        Boilerplate includes: class definitions, object instantiation, function calls from outside.
+        """
+        code = self._get_code_line(line_no).strip()
+        
+        # If no structure analysis, don't filter anything
+        if not self.code_structure:
+            return False
+        
+        # Always filter class definition lines
+        if code.startswith('class '):
+            return True
+        
+        # Filter function definition lines (def line itself)
+        if code.startswith('def '):
+            return True
+            
+        # Filter object instantiation lines (e.g., _solution = Solution())
+        if '= ' in code and '()' in code:
+            # Check if it's creating an instance of our class
+            if self.target_class_name and self.target_class_name + '()' in code:
+                return True
+                
+        # Filter result assignment lines that call the function
+        if self.target_function_name and f'.{self.target_function_name}(' in code:
+            return True
+            
+        # Filter print statements that just show results
+        if code.startswith('print(') and '_result' in code:
+            return True
+            
+        # Filter call/return events for class definitions
+        if event in ('call', 'return') and func_name == self.target_class_name:
+            return True
+            
+        # Filter module-level code that's not inside our target function
+        if self.target_function_name:
+            # Check if this line is inside the target function
+            main_func = self.code_structure.get('main_function', {})
+            func_start = main_func.get('body_start', 0)
+            func_end = main_func.get('end_line', 0)
+            
+            # If we're in the module level and outside the function body
+            if func_name == '<module>' and not (func_start <= line_no <= func_end):
+                return True
+                
+        return False
+    
+    def _should_include_frame(self, line_no: int, func_name: str, event: str) -> bool:
+        """
+        Determine if this frame should be included in the output.
+        We want to focus on the actual algorithm logic.
+        """
+        # Filter out boilerplate
+        if self._is_boilerplate_line(line_no, func_name, event):
+            return False
+            
+        # Include everything inside the target function
+        if self.target_function_name and func_name == self.target_function_name:
+            # Skip call/return events, just show the actual line executions
+            if event in ('call', 'return'):
+                return False
+            return True
+            
+        # For scripts without functions/classes, include everything
+        if not self.target_function_name:
+            return True
+            
+        return False
     
     def _generate_explanation(self, frame: TraceFrame) -> str:
         """
@@ -216,6 +351,10 @@ class PythonTracer:
         line_no = frame.f_lineno
         func_name = frame.f_code.co_name
         
+        # Check if we should include this frame (filter boilerplate)
+        if not self._should_include_frame(line_no, func_name, event):
+            return self._trace_callback
+        
         # Handle different event types
         if event == 'line':
             self.step_count += 1
@@ -241,41 +380,8 @@ class PythonTracer:
             
             self.frames.append(trace_frame)
             
-        elif event == 'call':
-            # Track function calls
-            if func_name != '<module>':
-                self.step_count += 1
-                trace_frame = TraceFrame(
-                    step=self.step_count,
-                    line=line_no,
-                    code=self._get_code_line(line_no),
-                    event=event,
-                    locals={},
-                    changed_vars=[],
-                    function_name=func_name
-                )
-                trace_frame.explanation = f"Entering function '{func_name}'"
-                self.frames.append(trace_frame)
-                
-        elif event == 'return':
-            # Track function returns
-            if func_name != '<module>':
-                self.step_count += 1
-                trace_frame = TraceFrame(
-                    step=self.step_count,
-                    line=line_no,
-                    code=self._get_code_line(line_no),
-                    event=event,
-                    locals=self._serialize_locals(frame.f_locals),
-                    changed_vars=[],
-                    function_name=func_name,
-                    return_value=self._safe_copy(arg)
-                )
-                trace_frame.explanation = f"Returning from '{func_name}' with value: {self._safe_copy(arg)}"
-                self.frames.append(trace_frame)
-                
         elif event == 'exception':
-            # Track exceptions
+            # Track exceptions - these are always important
             self.step_count += 1
             exc_type, exc_value, _ = arg
             trace_frame = TraceFrame(
@@ -312,9 +418,18 @@ class PythonTracer:
         self.step_count = 0
         self.previous_locals = {}
         self.error = None
+        self.code_structure = {}
+        self.inside_target_function = False
+        self.target_function_name = None
+        self.target_class_name = None
+        self.function_start_line = 0
+        self.function_end_line = 0
         
         # Store source lines for reference
         self.source_lines = code.split('\n')
+        
+        # Analyze code structure to identify the main algorithm
+        self._analyze_code_structure(code)
         
         # Import sandbox for safe execution
         from sandbox import create_sandbox, capture_output

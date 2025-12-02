@@ -159,6 +159,83 @@ const ImmersiveVisualizer = ({
     return result;
   };
 
+  // Render explanation with styled dry-run section
+  const renderExplanationWithDryRun = (explanation) => {
+    if (!explanation) return null;
+    
+    // Check if the explanation contains a DRY-RUN section
+    const dryRunMatch = explanation.match(/DRY-RUN:\s*([\s\S]*?)(?:$)/i);
+    
+    if (dryRunMatch) {
+      // Split into explanation and dry-run parts
+      const explanationPart = explanation.substring(0, explanation.indexOf('DRY-RUN:')).trim();
+      const dryRunPart = dryRunMatch[1].trim();
+      
+      // Parse dry-run lines and style them
+      const dryRunLines = dryRunPart.split('\n').filter(line => line.trim());
+      
+      return (
+        <>
+          {/* Text explanation */}
+          <p className="mt-1 text-slate-200 leading-relaxed">
+            {explanationPart}
+          </p>
+          
+          {/* Dry-run box */}
+          <div className="mt-3 bg-slate-900/80 rounded-xl p-4 border border-yellow-500/30">
+            <div className="flex items-center gap-2 mb-2">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-yellow-400">
+                <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>
+              </svg>
+              <span className="text-xs font-semibold text-yellow-400 uppercase tracking-wider">Dry Run</span>
+            </div>
+            <div className="font-mono text-sm space-y-1">
+              {dryRunLines.map((line, idx) => {
+                // Style based on content
+                let lineClass = 'text-slate-300';
+                let content = line;
+                
+                // True result - green
+                if (line.includes('True') || line.includes('✓') || line.includes('executes')) {
+                  lineClass = 'text-green-400 font-semibold';
+                }
+                // False result - red/orange
+                else if (line.includes('False') || line.includes('skipped')) {
+                  lineClass = 'text-orange-400';
+                }
+                // Arrow or assignment result
+                else if (line.includes('→') || (line.includes('=') && !line.includes('=='))) {
+                  lineClass = 'text-teal-300';
+                }
+                // Comparison/condition
+                else if (line.includes('>') || line.includes('<') || line.includes('==')) {
+                  lineClass = 'text-blue-300';
+                }
+                // "so" explanations
+                else if (line.toLowerCase().startsWith('so ')) {
+                  lineClass = 'text-slate-400 italic';
+                }
+                
+                return (
+                  <div key={idx} className={lineClass}>
+                    {content}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </>
+      );
+    }
+    
+    // No dry-run section, just render as plain text
+    return (
+      <p className="mt-1 text-slate-200 leading-relaxed">
+        {explanation}
+      </p>
+    );
+  };
+
   if (!isOpen) return null;
 
   return (
@@ -412,7 +489,7 @@ const ImmersiveVisualizer = ({
                           </div>
                         </div>
 
-                        {/* AI Explanation */}
+                        {/* AI Explanation with Dry-Run */}
                         {step.explanation && (
                           <div className="px-5 py-4 border-b border-slate-700/50">
                             <div className="flex items-start gap-3">
@@ -425,9 +502,7 @@ const ImmersiveVisualizer = ({
                               </div>
                               <div className="flex-1">
                                 <span className="text-xs font-semibold text-teal-400 uppercase tracking-wider">AI Explanation</span>
-                                <p className="mt-1 text-slate-200 leading-relaxed">
-                                  {step.explanation}
-                                </p>
+                                {renderExplanationWithDryRun(step.explanation)}
                               </div>
                             </div>
                           </div>
