@@ -483,6 +483,89 @@ Instructions:
         
         return "\n".join(formatted)
 
+    def classify_intent(self, user_message: str) -> dict:
+        """
+        Classify user intent: whether they want to continue to next step or ask a question.
+        Uses Gemini to understand the full meaning of the message.
+        
+        Returns:
+            dict with 'intent' ('continue' or 'question') and 'confidence' (0-1)
+        """
+        if not self.gemini_available:
+            # Fallback to simple keyword matching
+            return self._fallback_intent_classification(user_message)
+        
+        try:
+            prompt = f"""Classify the user's intent. They are viewing a step-by-step code explanation and just finished hearing an explanation.
+
+User message: "{user_message}"
+
+The user can either:
+1. Want to CONTINUE to the next step (e.g., "next", "continue", "go on", "yes", "okay, next", "let's move on", "I understand", "got it", "alright next", "proceed", "keep going", "show me more", "next step please", or short affirmations that indicate readiness to proceed)
+2. Have a QUESTION about the current step or code (e.g., asking why, how, what, requesting clarification, asking about variables, concepts, or anything that requires an explanation)
+
+IMPORTANT: 
+- Short confirmations like "okay", "yes", "got it", "I see", "makes sense", "understood" when said alone typically mean CONTINUE
+- But "okay, but why..." or "yes, but what about..." means QUESTION
+- If unsure, prefer QUESTION to avoid skipping content the user wants to understand
+
+Respond with ONLY one word: CONTINUE or QUESTION"""
+
+            # Use a lightweight, fast call
+            response = self.gemini_model.generate_content(
+                prompt,
+                generation_config=genai.GenerationConfig(
+                    temperature=0.1,  # Low temperature for consistent classification
+                    max_output_tokens=10,
+                )
+            )
+            
+            result = response.text.strip().upper()
+            
+            if 'CONTINUE' in result:
+                return {'intent': 'continue', 'confidence': 0.9}
+            else:
+                return {'intent': 'question', 'confidence': 0.9}
+                
+        except Exception as e:
+            print(f"Intent classification error: {e}")
+            return self._fallback_intent_classification(user_message)
+    
+    def _fallback_intent_classification(self, user_message: str) -> dict:
+        """Fallback keyword-based classification when Gemini is unavailable."""
+        lower_msg = user_message.lower().strip()
+        
+        # Strong continue indicators (when the message is ONLY these words)
+        strong_continue = ['next', 'continue', 'proceed', 'go on', 'move on', 'next step', 
+                          'go ahead', "let's go", "let's continue", 'keep going', 'show me more']
+        
+        # Check if message is exactly a continue phrase
+        if lower_msg in strong_continue:
+            return {'intent': 'continue', 'confidence': 0.95}
+        
+        # Check if starts with continue phrase and is short
+        for phrase in strong_continue:
+            if lower_msg.startswith(phrase) and len(lower_msg) < len(phrase) + 15:
+                return {'intent': 'continue', 'confidence': 0.8}
+        
+        # Question indicators
+        question_words = ['why', 'how', 'what', 'where', 'when', 'which', 'explain', 'clarify', 
+                         'tell me', 'can you', 'could you', "don't understand", "doesn't make sense",
+                         '?', 'confused', 'meaning', 'means']
+        
+        for qw in question_words:
+            if qw in lower_msg:
+                return {'intent': 'question', 'confidence': 0.85}
+        
+        # Short affirmations without question marks - likely continue
+        short_affirmations = ['ok', 'okay', 'yes', 'yeah', 'yep', 'sure', 'got it', 
+                             'i see', 'makes sense', 'understood', 'i understand', 'alright', 'right']
+        if lower_msg in short_affirmations or any(lower_msg == aff for aff in short_affirmations):
+            return {'intent': 'continue', 'confidence': 0.7}
+        
+        # Default to question if we can't determine
+        return {'intent': 'question', 'confidence': 0.5}
+
 
 # Singleton instance
 _teacher = None

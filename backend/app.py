@@ -246,6 +246,46 @@ def teacher_clear():
         return jsonify({"success": False, "error": str(e)}), 500
 
 
+@app.route('/api/teacher/classify-intent', methods=['POST'])
+def teacher_classify_intent():
+    """
+    Classify user intent using AI to determine if they want to continue or ask a question.
+    
+    Request body:
+    {
+        "message": "user's spoken message"
+    }
+    
+    Response:
+    {
+        "success": true,
+        "intent": "continue" or "question",
+        "confidence": 0.0 to 1.0
+    }
+    """
+    try:
+        data = request.get_json()
+        
+        if not data or 'message' not in data:
+            return jsonify({"success": False, "error": "No message provided"}), 400
+        
+        message = data.get('message', '').strip()
+        
+        if not message:
+            return jsonify({"success": False, "error": "Empty message"}), 400
+        
+        result = teacher.classify_intent(message)
+        
+        return jsonify({
+            "success": True,
+            "intent": result['intent'],
+            "confidence": result['confidence']
+        })
+        
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
 @app.route('/api/teacher/step-chat', methods=['POST'])
 def teacher_step_chat():
     """

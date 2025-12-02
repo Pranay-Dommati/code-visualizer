@@ -1037,29 +1037,40 @@ const ImmersiveVisualizer = ({
     }
   }, [isTeacherThinking, currentStepIndex, queueForSpeech, stopSpeaking]);
 
-  // Handle voice message send event - check for guided mode commands first
+  // Handle voice message send event - use AI to classify intent
   useEffect(() => {
-    const handleVoiceSend = (e) => {
+    const handleVoiceSend = async (e) => {
       const message = e.detail;
       console.log('Voice send event received:', message);
       
       if (!message) return;
       
-      const lowerMessage = message.toLowerCase().trim();
-      
       // Check if we're in guided mode waiting for input
       if (isGuidedMode && waitingForUserInput) {
-        // Check for "next step" keywords
-        const continueKeywords = ['next', 'continue', 'go on', 'proceed', 'yes', 'okay', 'ok', 'sure', 'move on', 'next step', 'go ahead', 'let\'s go', 'let\'s continue'];
-        const wantsToContinue = continueKeywords.some(kw => lowerMessage.includes(kw));
-        
-        if (wantsToContinue && currentStepIndex < steps.length - 1) {
-          console.log('User wants to continue to next step');
-          moveToNextStep();
-          return;
+        try {
+          // Use AI to classify intent
+          console.log('Classifying intent with AI...');
+          const response = await fetch(`${API_BASE_URL}/teacher/classify-intent`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ message: message })
+          });
+          
+          if (response.ok) {
+            const data = await response.json();
+            console.log('Intent classification result:', data);
+            
+            if (data.success && data.intent === 'continue' && currentStepIndex < steps.length - 1) {
+              console.log('AI determined user wants to continue to next step');
+              moveToNextStep();
+              return;
+            }
+          }
+        } catch (err) {
+          console.error('Intent classification failed, falling back to question:', err);
         }
         
-        // User has a question - send to inline step chat instead of AI Teacher tab
+        // If AI says question, or classification failed, treat as a question
         console.log('User has a question about step', currentStepIndex, '- sending to inline step chat');
         sendStepMessage(currentStepIndex, message);
         // Keep listening mode active for follow-up
