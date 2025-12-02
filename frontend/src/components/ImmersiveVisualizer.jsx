@@ -44,13 +44,19 @@ const ImmersiveVisualizer = ({
     return () => clearTimeout(playIntervalRef.current);
   }, [isPlaying, currentStepIndex, steps, playbackSpeed]);
 
-  // Auto-scroll to latest step
+  // Auto-scroll to latest step only if user is near the bottom
   useEffect(() => {
-    if (latestStepRef.current) {
-      latestStepRef.current.scrollIntoView({ 
-        behavior: 'smooth', 
-        block: 'center' 
-      });
+    if (latestStepRef.current && scrollContainerRef.current) {
+      const container = scrollContainerRef.current;
+      const scrollBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
+      
+      // Only auto-scroll if user is within 300px of the bottom (not reading previous content)
+      if (scrollBottom < 300) {
+        latestStepRef.current.scrollIntoView({ 
+          behavior: 'smooth', 
+          block: 'center' 
+        });
+      }
     }
   }, [visibleSteps]);
 
