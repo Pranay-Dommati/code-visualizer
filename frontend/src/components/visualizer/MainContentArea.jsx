@@ -278,16 +278,17 @@ const MainContentArea = ({
                     value={chatInput}
                     onChange={(e) => setChatInput(e.target.value)}
                     onKeyDown={handleChatKeyDown}
-                    placeholder={isListening ? "Listening..." : "Ask about the code..."}
+                    placeholder={isGuidedMode && waitingForUserInput ? "Voice active in guided mode..." : isListening ? "Listening..." : "Ask about the code..."}
                     className="flex-1 bg-transparent text-sm text-white placeholder-slate-500 outline-none"
-                    disabled={isTeacherThinking || isListening}
+                    disabled={isTeacherThinking || isListening || (isGuidedMode && waitingForUserInput)}
                   />
                   
                   {/* Show mic button when input is empty, send button when there's text */}
+                  {/* Hide voice controls when guided mode is waiting for input (voice is handled there) */}
                   {chatInput.trim() ? (
                     <button
                       onClick={sendMessage}
-                      disabled={isTeacherThinking}
+                      disabled={isTeacherThinking || (isGuidedMode && waitingForUserInput)}
                       className="p-2 rounded-lg transition-all bg-gradient-to-r from-purple-500 to-blue-500 text-white hover:from-purple-600 hover:to-blue-600"
                     >
                       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -295,6 +296,14 @@ const MainContentArea = ({
                         <polygon points="22 2 15 22 11 13 2 9 22 2"/>
                       </svg>
                     </button>
+                  ) : (isGuidedMode && waitingForUserInput) ? (
+                    /* In guided mode - show indicator that voice is active elsewhere */
+                    <div className="p-2 rounded-lg bg-purple-500/20 text-purple-400" title="Voice active in step view">
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+                        <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+                      </svg>
+                    </div>
                   ) : (
                     <button
                       onClick={isListening ? stopListening : startListening}
@@ -326,8 +335,8 @@ const MainContentArea = ({
                   )}
                 </div>
                 
-                {/* Listening / Conversation mode indicator */}
-                {isListening && (
+                {/* Listening / Conversation mode indicator - NOT shown when guided mode is handling voice */}
+                {isListening && !(isGuidedMode && waitingForUserInput) && (
                   <div className="flex items-center justify-center gap-2 mt-2 text-xs text-red-400">
                     <span className="flex gap-1">
                       <span className="w-1.5 h-1.5 bg-red-500 rounded-full animate-bounce" style={{animationDelay: '0ms'}}></span>
@@ -338,8 +347,18 @@ const MainContentArea = ({
                   </div>
                 )}
                 
+                {/* Guided mode indicator in AI Teacher tab */}
+                {isGuidedMode && waitingForUserInput && (
+                  <div className="flex items-center justify-center gap-2 mt-2 text-xs text-purple-400">
+                    <svg className="w-3 h-3 animate-pulse" viewBox="0 0 24 24" fill="currentColor">
+                      <circle cx="12" cy="12" r="10"/>
+                    </svg>
+                    <span>Guided mode active • Use voice in step view</span>
+                  </div>
+                )}
+                
                 {/* Conversation mode indicator - shows when AI is speaking and will auto-listen */}
-                {isConversationMode && isTeacherSpeaking && !isListening && (
+                {isConversationMode && isTeacherSpeaking && !isListening && !(isGuidedMode && waitingForUserInput) && (
                   <div className="flex items-center justify-center gap-2 mt-2 text-xs text-purple-400">
                     <svg className="w-3 h-3 animate-pulse" viewBox="0 0 24 24" fill="currentColor">
                       <circle cx="12" cy="12" r="10"/>
@@ -348,8 +367,8 @@ const MainContentArea = ({
                   </div>
                 )}
                 
-                {/* Exit conversation mode button */}
-                {isConversationMode && !isListening && !isTeacherSpeaking && !isTeacherThinking && (
+                {/* Exit conversation mode button - hide when in guided mode */}
+                {isConversationMode && !isListening && !isTeacherSpeaking && !isTeacherThinking && !(isGuidedMode && waitingForUserInput) && (
                   <div className="flex items-center justify-center gap-2 mt-2">
                     <button
                       onClick={() => {

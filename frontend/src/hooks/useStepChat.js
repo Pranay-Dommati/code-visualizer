@@ -11,7 +11,9 @@ const useStepChat = ({
   code = '', 
   codeLines = [],
   onSpeakText,
-  onStopSpeaking 
+  onStopSpeaking,
+  onResponseComplete,  // Callback when AI finishes responding (for auto-listen)
+  sharedAudioRef       // Shared audio ref to prevent dual audio playback
 }) => {
   // Conversation state per step: { [stepIndex]: { messages: [], isLoading: false, isSpeaking: false } }
   const [stepConversations, setStepConversations] = useState({});
@@ -19,7 +21,9 @@ const useStepChat = ({
   const [isStepChatSpeaking, setIsStepChatSpeaking] = useState(false);
   const [speakingStepIndex, setSpeakingStepIndex] = useState(null);
   
-  const audioRef = useRef(null);
+  // Use shared audio ref if provided, otherwise create local one
+  const localAudioRef = useRef(null);
+  const audioRef = sharedAudioRef || localAudioRef;
   const audioQueueRef = useRef([]);
   const isPlayingQueueRef = useRef(false);
   const displayedTextRef = useRef('');
@@ -67,6 +71,12 @@ const useStepChat = ({
   const speakStepResponse = useCallback(async (stepIndex, text) => {
     if (!text) return;
 
+    // Stop any currently playing audio (shared ref handles both narration and step chat)
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current = null;
+    }
+
     setIsStepChatSpeaking(true);
     setSpeakingStepIndex(stepIndex);
     displayedTextRef.current = '';
@@ -100,7 +110,7 @@ const useStepChat = ({
 
     setIsStepChatSpeaking(false);
     setSpeakingStepIndex(null);
-  }, []);
+  }, [audioRef]);
 
   /**
    * Play audio with character-level sync
@@ -185,13 +195,23 @@ const useStepChat = ({
 
       // Speak the response
       await speakStepResponse(stepIndex, aiResponse);
+      
+      // Trigger callback to auto-listen for follow-up
+      if (onResponseComplete) {
+        onResponseComplete(stepIndex);
+      }
 
     } catch (err) {
       console.error('Step chat error:', err);
       addMessage(stepIndex, 'ai', "Sorry, I encountered an error. Please try again.");
       setStepLoading(stepIndex, false);
+      
+      // Still trigger callback even on error so user can continue
+      if (onResponseComplete) {
+        onResponseComplete(stepIndex);
+      }
     }
-  }, [steps, code, codeLines, addMessage, setStepLoading, getStepConversation, speakStepResponse]);
+  }, [steps, code, codeLines, addMessage, setStepLoading, getStepConversation, speakStepResponse, onResponseComplete]);
 
   /**
    * Clear conversation for a step

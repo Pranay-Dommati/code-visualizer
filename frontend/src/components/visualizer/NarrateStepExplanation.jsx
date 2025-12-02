@@ -8,6 +8,7 @@ export function createNarrateStepExplanation({
   setWaitingForUserInput,
   shouldAutoListenRef,
   setIsConversationMode,
+  stopStepSpeaking,  // Add function to stop step chat audio
 }) {
   return async function narrateStepExplanation(
     stepIndex,
@@ -17,6 +18,15 @@ export function createNarrateStepExplanation({
     steps
   ) {
     if (!explanation || isNarratingStep) return;
+
+    // Stop any currently playing audio before starting narration
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current = null;
+    }
+    if (stopStepSpeaking) {
+      stopStepSpeaking();
+    }
 
     setIsNarratingStep(true);
     currentNarrationStepRef.current = stepIndex;
@@ -192,7 +202,7 @@ export function createNarrateStepExplanation({
 
       setWaitingForUserInput(true);
       shouldAutoListenRef.current = true;
-      setIsConversationMode(true);
+      // setIsConversationMode(true); // Don't enable AI Teacher voice mode in guided mode
 
       setTimeout(() => {
         if (shouldAutoListenRef.current) {

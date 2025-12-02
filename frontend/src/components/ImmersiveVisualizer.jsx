@@ -56,6 +56,22 @@ const ImmersiveVisualizer = ({
   const currentNarrationStepRef = useRef(-1); // Track which step is being narrated
   const stepChatRecognitionRef = useRef(null); // Separate recognition for step chats
   
+  // Callback when step chat AI finishes responding - restart listening
+  const handleStepChatResponseComplete = useCallback((stepIndex) => {
+    console.log('Step chat response complete for step', stepIndex, '- restarting listening');
+    // Only auto-listen if we're in guided mode and waiting for input
+    if (isGuidedMode && waitingForUserInput) {
+      shouldAutoListenRef.current = true;
+      // Dispatch auto-listen event after a short delay
+      setTimeout(() => {
+        if (shouldAutoListenRef.current) {
+          const listenEvent = new CustomEvent('autoStartListening');
+          window.dispatchEvent(listenEvent);
+        }
+      }, 500);
+    }
+  }, [isGuidedMode, waitingForUserInput]);
+  
   // Use the step chat hook
   const {
     stepConversations,
@@ -67,7 +83,13 @@ const ImmersiveVisualizer = ({
     clearAllConversations,
     stopStepSpeaking,
     setActiveStepChat,
-  } = useStepChat({ steps, code, codeLines });
+  } = useStepChat({ 
+    steps, 
+    code, 
+    codeLines,
+    onResponseComplete: handleStepChatResponseComplete,
+    sharedAudioRef: audioRef  // Share audio ref to prevent dual playback
+  });
 
   // Step chat voice input functions
   const startStepChatListening = useCallback((stepIndex) => {
@@ -521,6 +543,12 @@ const ImmersiveVisualizer = ({
       const data = await response.json();
       
       if (data.success && data.audio) {
+        // Stop any currently playing audio before starting new segment
+        if (audioRef.current) {
+          audioRef.current.pause();
+          audioRef.current = null;
+        }
+
         const audio = new Audio(`data:audio/mpeg;base64,${data.audio}`);
         audioRef.current = audio;
         
@@ -656,8 +684,9 @@ const ImmersiveVisualizer = ({
     setWaitingForUserInput,
     shouldAutoListenRef,
     setIsConversationMode,
+    stopStepSpeaking,
   }),
-  []
+  [stopStepSpeaking]
 );
 
 
@@ -683,6 +712,11 @@ const ImmersiveVisualizer = ({
   // Move to next step (called after user says "next" or clicks button)
   const moveToNextStep = useCallback(() => {
     setWaitingForUserInput(false);
+    
+    // Stop any currently playing audio (narration or step chat)
+    stopSpeaking();
+    stopStepSpeaking();
+    setIsNarratingStep(false); // Force reset narration state
     
     const nextIndex = currentStepIndex + 1;
     if (nextIndex < steps.length) {
@@ -710,7 +744,7 @@ const ImmersiveVisualizer = ({
         narrateStepExplanation(
             nextIndex,
             steps[nextIndex].explanation,
-            isNarratingStep,
+            false, // Force start by passing false for isNarratingStep
             isGuidedMode,
             steps
         );
@@ -718,7 +752,7 @@ const ImmersiveVisualizer = ({
 
       }, 500);
     }
-  }, [currentStepIndex, steps, narrateStepExplanation]);
+  }, [currentStepIndex, steps, narrateStepExplanation, stopSpeaking, stopStepSpeaking, isGuidedMode]);
 
   // Start guided narration when first step appears
   useEffect(() => {
@@ -840,7 +874,11 @@ const ImmersiveVisualizer = ({
     
     // Enable conversation mode - will auto-listen after AI responds
     shouldAutoListenRef.current = true;
-    setIsConversationMode(true);
+    
+    // Only enable AI Teacher conversation mode if NOT in guided mode
+    if (!isGuidedMode) {
+      setIsConversationMode(true);
+    }
 
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     const recognition = new SpeechRecognition();
@@ -883,8 +921,11 @@ const ImmersiveVisualizer = ({
         setIsConversationMode(false);
         alert('Microphone access was denied. Please allow microphone access to use voice input.');
       } else if (event.error === 'no-speech') {
-        // No speech detected - in conversation mode, we might want to keep listening
-        // But for now, just wait for next auto-listen
+        // No speech detected - if in guided mode, move to next step automatically
+        if (isGuidedMode && waitingForUserInput && currentStepIndex < steps.length - 1) {
+          console.log('No speech detected - moving to next step automatically');
+          moveToNextStep();
+        }
       }
     };
     
@@ -897,12 +938,18 @@ const ImmersiveVisualizer = ({
           const sendEvent = new CustomEvent('voiceSendMessage', { detail: finalTranscriptResult.trim() });
           window.dispatchEvent(sendEvent);
         }, 50);
+      } else {
+        // No speech was captured - if in guided mode, move to next step
+        if (isGuidedMode && waitingForUserInput && currentStepIndex < steps.length - 1) {
+          console.log('Empty transcript - moving to next step automatically');
+          moveToNextStep();
+        }
       }
     };
     
     recognitionRef.current = recognition;
     recognition.start();
-  }, [stopSpeaking]);
+  }, [stopSpeaking, isGuidedMode, waitingForUserInput, currentStepIndex, steps.length, moveToNextStep]);
 
   // Voice input - Stop listening and exit conversation mode
   const stopListening = useCallback(() => {
@@ -923,11 +970,12 @@ const ImmersiveVisualizer = ({
         shouldAutoListen: shouldAutoListenRef.current,
         isTeacherThinking,
         isTeacherSpeaking,
+        isStepChatSpeaking,
         isListening,
         isNarratingStep
       });
       
-      if (shouldAutoListenRef.current && !isTeacherThinking && !isTeacherSpeaking && !isListening && !isNarratingStep) {
+      if (shouldAutoListenRef.current && !isTeacherThinking && !isTeacherSpeaking && !isStepChatSpeaking && !isListening && !isNarratingStep) {
         console.log('Starting listening...');
         startListening();
       }
@@ -935,7 +983,7 @@ const ImmersiveVisualizer = ({
     
     window.addEventListener('autoStartListening', handleAutoListen);
     return () => window.removeEventListener('autoStartListening', handleAutoListen);
-  }, [startListening, isTeacherThinking, isTeacherSpeaking, isListening, isNarratingStep]);
+  }, [startListening, isTeacherThinking, isTeacherSpeaking, isStepChatSpeaking, isListening, isNarratingStep]);
 
   // Cleanup recognition on unmount
   useEffect(() => {
@@ -1078,8 +1126,8 @@ const ImmersiveVisualizer = ({
         return;
       }
       
-      // Normal voice message handling (when not in guided mode)
-      if (!isTeacherThinking) {
+      // Normal voice message handling (ONLY when not in guided mode)
+      if (!isTeacherThinking && !isGuidedMode) {
         sendVoiceMessage(message);
       }
     };
@@ -1450,11 +1498,15 @@ const ImmersiveVisualizer = ({
           {/* Guided Mode Toggle */}
           <button
             onClick={() => {
-              setIsGuidedMode(!isGuidedMode);
+              const newMode = !isGuidedMode;
+              setIsGuidedMode(newMode);
+              
+              // Always disable AI Teacher conversation mode when switching
+              setIsConversationMode(false);
+              
               if (isGuidedMode) {
                 // Turning off guided mode - stop narration
                 shouldAutoListenRef.current = false;
-                setIsConversationMode(false);
                 setWaitingForUserInput(false);
               }
             }}
