@@ -41,3 +41,239 @@ code, pre, textarea, .font-mono {
 ::-webkit-scrollbar-thumb:hover {
   background: #64748b;
 }
+
+/* Resizable panel styles */
+.resizable-panel {
+  transition: none;
+}
+
+.resizable-panel.not-dragging {
+  transition: width 0.15s ease-out;
+}
+
+/* Prevent selection during resize */
+.resize-dragging {
+  cursor: col-resize !important;
+}
+
+.resize-dragging * {
+  user-select: none !important;
+  -webkit-user-select: none !important;
+  pointer-events: none !important;
+}
+
+.resize-dragging .resize-handle {
+  pointer-events: auto !important;
+}
+
+/* ============================================
+   CINEMATIC ANIMATIONS
+   ============================================ */
+
+/* Fade in animation */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Fade in up animation */
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Typing cursor animation */
+@keyframes blink {
+  0%, 50% { opacity: 1; }
+  51%, 100% { opacity: 0; }
+}
+
+/* Glow pulse animation */
+@keyframes glowPulse {
+  0%, 100% {
+    box-shadow: 0 0 5px rgba(20, 184, 166, 0.3),
+                0 0 10px rgba(20, 184, 166, 0.2),
+                0 0 20px rgba(20, 184, 166, 0.1);
+  }
+  50% {
+    box-shadow: 0 0 10px rgba(20, 184, 166, 0.5),
+                0 0 20px rgba(20, 184, 166, 0.3),
+                0 0 40px rgba(20, 184, 166, 0.2);
+  }
+}
+
+/* Line highlight glow */
+@keyframes lineGlow {
+  0%, 100% {
+    background: rgba(20, 184, 166, 0.1);
+    border-left-color: rgba(20, 184, 166, 0.5);
+  }
+  50% {
+    background: rgba(20, 184, 166, 0.15);
+    border-left-color: rgba(20, 184, 166, 0.8);
+  }
+}
+
+/* Scale in animation */
+@keyframes scaleIn {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+/* Slide in from right */
+@keyframes slideInRight {
+  from {
+    opacity: 0;
+    transform: translateX(30px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+/* Typewriter effect */
+@keyframes typewriter {
+  from { width: 0; }
+  to { width: 100%; }
+}
+
+/* Variable update flash */
+@keyframes varFlash {
+  0% {
+    background: rgba(20, 184, 166, 0.3);
+    transform: scale(1.02);
+  }
+  100% {
+    background: rgba(20, 184, 166, 0.1);
+    transform: scale(1);
+  }
+}
+
+/* Utility classes for animations */
+.animate-fade-in {
+  animation: fadeIn 0.5s ease-out forwards;
+}
+
+.animate-fade-in-up {
+  animation: fadeInUp 0.6s ease-out forwards;
+}
+
+.animate-scale-in {
+  animation: scaleIn 0.4s ease-out forwards;
+}
+
+.animate-slide-in-right {
+  animation: slideInRight 0.5s ease-out forwards;
+}
+
+.animate-glow-pulse {
+  animation: glowPulse 2s ease-in-out infinite;
+}
+
+.animate-line-glow {
+  animation: lineGlow 1.5s ease-in-out infinite;
+}
+
+.animate-var-flash {
+  animation: varFlash 0.5s ease-out forwards;
+}
+
+/* Blur effect for non-active lines */
+.line-blur {
+  filter: blur(1px);
+  opacity: 0.5;
+  transition: all 0.3s ease;
+}
+
+.line-focus {
+  filter: blur(0);
+  opacity: 1;
+  transition: all 0.3s ease;
+}
+
+/* Active line cinematic highlight */
+.active-line-highlight {
+  position: relative;
+  background: linear-gradient(90deg, 
+    rgba(20, 184, 166, 0.15) 0%, 
+    rgba(59, 130, 246, 0.1) 50%,
+    transparent 100%
+  );
+  border-left: 3px solid #14b8a6;
+  animation: lineGlow 1.5s ease-in-out infinite;
+}
+
+.active-line-highlight::before {
+  content: '';
+  position: absolute;
+  left: -3px;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: linear-gradient(180deg, #14b8a6, #3b82f6);
+  box-shadow: 0 0 10px rgba(20, 184, 166, 0.5);
+}
+
+/* Storyline overlay styles */
+.storyline-overlay {
+  background: radial-gradient(ellipse at center, 
+    rgba(15, 23, 42, 0.95) 0%, 
+    rgba(15, 23, 42, 0.98) 100%
+  );
+  backdrop-filter: blur(8px);
+}
+
+/* Typing animation container */
+.typing-text {
+  display: inline-block;
+  overflow: hidden;
+  white-space: nowrap;
+  border-right: 2px solid #14b8a6;
+  animation: typewriter 2s steps(40) forwards, blink 0.7s step-end infinite;
+}
+
+/* Progress dots animation */
+.progress-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #14b8a6;
+  animation: bounce 1s ease-in-out infinite;
+}
+
+.progress-dot:nth-child(2) {
+  animation-delay: 0.1s;
+}
+
+.progress-dot:nth-child(3) {
+  animation-delay: 0.2s;
+}
+
+@keyframes bounce {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-10px); }
+}
+
+/* Smooth scroll for code editor */
+.smooth-scroll {
+  scroll-behavior: smooth;
+}

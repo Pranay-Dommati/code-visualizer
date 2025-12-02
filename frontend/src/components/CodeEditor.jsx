@@ -7,13 +7,12 @@ const CodeEditor = ({
   autoGenerateInput, 
   setAutoGenerateInput,
   isRunning,
-  currentLine,
-  error 
+  error
 }) => {
   const lines = code.split('\n');
   
   return (
-    <div className="h-full flex flex-col bg-slate-900 rounded-xl border border-slate-700 shadow-xl overflow-hidden">
+    <div className="h-full flex flex-col bg-slate-900 rounded-xl border border-slate-700 shadow-2xl overflow-hidden">
       {/* Editor Header */}
       <div className="flex items-center justify-between px-4 py-3 bg-slate-800/50 border-b border-slate-700">
         <div className="flex items-center gap-2">
@@ -37,15 +36,11 @@ const CodeEditor = ({
       {/* Code Area with Line Numbers */}
       <div className="flex-1 flex overflow-hidden">
         {/* Line Numbers */}
-        <div className="w-12 bg-slate-850 border-r border-slate-700/50 py-4 select-none overflow-hidden">
+        <div className="w-12 bg-slate-850 border-r border-slate-700/50 py-4 select-none flex-shrink-0 overflow-hidden">
           {lines.map((_, index) => (
             <div
               key={index}
-              className={`h-6 flex items-center justify-end pr-3 text-xs font-mono transition-all duration-200 ${
-                currentLine === index + 1
-                  ? 'text-teal-400 font-semibold bg-teal-500/10'
-                  : 'text-slate-500'
-              }`}
+              className="h-6 flex items-center justify-end pr-3 text-xs font-mono text-slate-500"
             >
               {index + 1}
             </div>
@@ -53,15 +48,7 @@ const CodeEditor = ({
         </div>
 
         {/* Code Editor */}
-        <div className="flex-1 relative">
-          {/* Highlight overlay for current line */}
-          {currentLine && (
-            <div
-              className="absolute left-0 right-0 h-6 bg-teal-500/10 border-l-2 border-teal-400 pointer-events-none transition-all duration-300"
-              style={{ top: `${(currentLine - 1) * 24 + 16}px` }}
-            />
-          )}
-          
+        <div className="flex-1 relative overflow-auto smooth-scroll">
           <textarea
             value={code}
             onChange={(e) => setCode(e.target.value)}
@@ -88,7 +75,7 @@ print(arr)"
       <div className="px-4 py-4 bg-slate-800/30 border-t border-slate-700">
         {/* Error Display */}
         {error && (
-          <div className="mb-4 p-3 bg-red-500/10 border border-red-500/30 rounded-lg flex items-start gap-2">
+          <div className="mb-4 p-3 bg-red-500/10 border border-red-500/30 rounded-lg flex items-start gap-2 animate-fade-in">
             <svg className="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <circle cx="12" cy="12" r="10" />
               <line x1="12" y1="8" x2="12" y2="12" />
@@ -117,7 +104,7 @@ print(arr)"
           </label>
           
           <span className="text-xs text-slate-500">
-            {lines.length} lines
+            {lines.filter(l => l.trim()).length} lines
           </span>
         </div>
 

@@ -327,12 +327,26 @@ def create_sandbox(input_values: Optional[List[str]] = None) -> Tuple[Dict[str, 
     # Add safe print
     safe_builtins['print'] = SafePrint(output_buffer)
     
+    # Pre-import common typing constructs for convenience
+    # This allows users to use List, Dict, etc. without explicit imports
+    from typing import List as TypingList, Dict as TypingDict, Set as TypingSet
+    from typing import Tuple as TypingTuple, Optional as TypingOptional
+    from typing import Any as TypingAny, Union as TypingUnion
+    
     # Create globals with restricted builtins
     sandbox_globals = {
         '__builtins__': safe_builtins,
         '__name__': '__main__',
         '__doc__': None,
         '_output_buffer_': output_buffer,  # For accessing output
+        # Pre-imported typing constructs (common in LeetCode-style problems)
+        'List': TypingList,
+        'Dict': TypingDict,
+        'Set': TypingSet,
+        'Tuple': TypingTuple,
+        'Optional': TypingOptional,
+        'Any': TypingAny,
+        'Union': TypingUnion,
     }
     
     # Empty locals

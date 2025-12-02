@@ -1,8 +1,8 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import TopBar from './components/TopBar';
 import CodeEditor from './components/CodeEditor';
-import VisualizationPanel from './components/VisualizationPanel';
 import InputModal from './components/InputModal';
+import ImmersiveVisualizer from './components/ImmersiveVisualizer';
 import './App.css';
 
 const API_BASE_URL = 'http://localhost:5000/api';
@@ -22,15 +22,17 @@ function App() {
   const [autoGenerateInput, setAutoGenerateInput] = useState(false);
   const [isRunning, setIsRunning] = useState(false);
   const [steps, setSteps] = useState([]);
-  const [currentStepIndex, setCurrentStepIndex] = useState(0);
-  const [currentLine, setCurrentLine] = useState(null);
-  const [executionComplete, setExecutionComplete] = useState(false);
   const [error, setError] = useState(null);
   
   // Input modal state
   const [showInputModal, setShowInputModal] = useState(false);
   const [detectedInputs, setDetectedInputs] = useState([]);
   const [codeMetadata, setCodeMetadata] = useState(null);
+  
+  // Immersive visualizer state
+  const [showVisualizer, setShowVisualizer] = useState(false);
+  const [isLoadingTrace, setIsLoadingTrace] = useState(false);
+  const [loadingPhase, setLoadingPhase] = useState(0);
 
   // Detect inputs in the code
   const detectInputs = useCallback(async (codeToCheck) => {
@@ -53,10 +55,21 @@ function App() {
   const runTrace = useCallback(async (inputValues = [], metadata = null) => {
     setIsRunning(true);
     setError(null);
-    setExecutionComplete(false);
     setShowInputModal(false);
     
+    // Open immersive visualizer immediately with loading state
+    setShowVisualizer(true);
+    setIsLoadingTrace(true);
+    setSteps([]);
+    
     const meta = metadata || codeMetadata;
+    
+    // Animate through loading phases
+    setLoadingPhase(1); // Reading code
+    await new Promise(resolve => setTimeout(resolve, 800));
+    setLoadingPhase(2); // Analyzing
+    await new Promise(resolve => setTimeout(resolve, 800));
+    setLoadingPhase(3); // Preparing
     
     try {
       const response = await fetch(`${API_BASE_URL}/trace`, {
@@ -74,6 +87,9 @@ function App() {
       
       const data = await response.json();
       
+      setLoadingPhase(4); // Starting
+      await new Promise(resolve => setTimeout(resolve, 500));
+      
       if (data.success && data.frames && data.frames.length > 0) {
         // Transform frames to match our visualization format
         const transformedSteps = data.frames.map(frame => ({
@@ -88,15 +104,18 @@ function App() {
         }));
         
         setSteps(transformedSteps);
-        setCurrentStepIndex(0);
-        setCurrentLine(transformedSteps[0]?.lineNumber || null);
+        setIsLoadingTrace(false);
       } else {
         setError(data.error || 'Failed to trace code');
         setSteps([]);
+        setShowVisualizer(false);
+        setIsLoadingTrace(false);
       }
     } catch (err) {
       setError(`Connection error: ${err.message}. Make sure the backend is running.`);
       setSteps([]);
+      setShowVisualizer(false);
+      setIsLoadingTrace(false);
     } finally {
       setIsRunning(false);
     }
@@ -107,6 +126,7 @@ function App() {
     if (!code.trim()) return;
     
     setError(null);
+    setLoadingPhase(0);
     
     // First, detect if the code needs any inputs
     const inputDetection = await detectInputs(code);
@@ -129,44 +149,30 @@ function App() {
     runTrace(inputValues, codeMetadata);
   }, [runTrace, codeMetadata]);
 
-  const handleNextStep = useCallback(() => {
-    if (currentStepIndex < steps.length - 1) {
-      const nextIndex = currentStepIndex + 1;
-      setCurrentStepIndex(nextIndex);
-      setCurrentLine(steps[nextIndex]?.lineNumber || null);
-      
-      if (nextIndex === steps.length - 1) {
-        setExecutionComplete(true);
-      }
-    }
-  }, [currentStepIndex, steps]);
-
-  const handlePrevStep = useCallback(() => {
-    if (currentStepIndex > 0) {
-      const prevIndex = currentStepIndex - 1;
-      setCurrentStepIndex(prevIndex);
-      setCurrentLine(steps[prevIndex]?.lineNumber || null);
-      setExecutionComplete(false);
-    }
-  }, [currentStepIndex, steps]);
+  const handleCloseVisualizer = useCallback(() => {
+    setShowVisualizer(false);
+    setSteps([]);
+    setIsLoadingTrace(false);
+  }, []);
 
   const handleUploadExample = useCallback(() => {
     setCode(exampleCode);
     setSteps([]);
-    setCurrentStepIndex(0);
-    setCurrentLine(null);
-    setExecutionComplete(false);
     setError(null);
     setCodeMetadata(null);
+    setShowVisualizer(false);
   }, []);
+
+  // Get code lines for the visualizer
+  const codeLines = code.split('\n');
 
   return (
     <div className="h-screen flex flex-col overflow-hidden bg-gradient-to-br from-slate-950 to-slate-900">
       <TopBar onUploadExample={handleUploadExample} />
       
-      <main className="flex-1 flex flex-row p-4 gap-4 overflow-hidden min-h-0">
-        {/* Left Pane - Code Editor */}
-        <div className="w-1/2 min-w-0 h-full">
+      <main className="flex-1 flex items-center justify-center p-4 overflow-hidden min-h-0">
+        {/* Centered Code Editor */}
+        <div className="w-full max-w-3xl h-full">
           <CodeEditor
             code={code}
             setCode={setCode}
@@ -174,23 +180,9 @@ function App() {
             autoGenerateInput={autoGenerateInput}
             setAutoGenerateInput={setAutoGenerateInput}
             isRunning={isRunning}
-            currentLine={currentLine}
+            currentLine={null}
             error={error}
-          />
-        </div>
-
-        {/* Divider */}
-        <div className="w-1 bg-slate-700 hover:bg-teal-500 rounded-full cursor-col-resize transition-colors flex-shrink-0" />
-
-        {/* Right Pane - Visualization */}
-        <div className="w-1/2 min-w-0 h-full">
-          <VisualizationPanel
-            steps={steps}
-            currentStepIndex={currentStepIndex}
-            onNextStep={handleNextStep}
-            onPrevStep={handlePrevStep}
-            isRunning={isRunning}
-            executionComplete={executionComplete}
+            isVisualizationActive={false}
           />
         </div>
       </main>
@@ -204,6 +196,17 @@ function App() {
         codeType={codeMetadata?.codeType}
         functionName={codeMetadata?.functionName}
         className={codeMetadata?.className}
+      />
+      
+      {/* Immersive Full-Screen Visualizer */}
+      <ImmersiveVisualizer
+        isOpen={showVisualizer}
+        onClose={handleCloseVisualizer}
+        steps={steps}
+        code={code}
+        codeLines={codeLines}
+        isLoading={isLoadingTrace}
+        loadingPhase={loadingPhase}
       />
     </div>
   );

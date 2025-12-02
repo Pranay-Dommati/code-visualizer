@@ -14,11 +14,15 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 from tracer import trace_code
 from sandbox import validate_code
+from ai_narrator import get_narrator, generate_narration
 import json
 import ast
 import re
 
 app = Flask(__name__)
+
+# Initialize AI Narrator at startup
+narrator = get_narrator()
 
 # Enable CORS for frontend
 CORS(app, resources={
@@ -36,7 +40,8 @@ def health_check():
     return jsonify({
         "status": "healthy",
         "service": "Python Code Visualizer API",
-        "version": "1.0.0"
+        "version": "1.0.0",
+        "ai_narrator": narrator.is_available
     })
 
 
@@ -415,6 +420,25 @@ print(f"Result: {{_result}}")
         
         # Trace the code
         result = trace_code(executable_code, input_values if code_type == "script" else [])
+        
+        # Enrich frames with AI-generated narrations
+        if result.get('success') and result.get('frames'):
+            source_lines = result.get('source_lines', [])
+            
+            for frame in result['frames']:
+                # Generate AI narration for each frame
+                ai_narration = narrator.generate_narration(
+                    step=frame.get('step', 0),
+                    line=frame.get('line', 0),
+                    code=frame.get('code', ''),
+                    event=frame.get('event', 'line'),
+                    variables=frame.get('locals', {}),
+                    changed_vars=frame.get('changed_vars', []),
+                    function_name=frame.get('function_name'),
+                    return_value=frame.get('return_value'),
+                    full_source=source_lines
+                )
+                frame['explanation'] = ai_narration
         
         return jsonify(result)
         
