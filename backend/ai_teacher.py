@@ -335,6 +335,67 @@ The student is visualizing this code execution. Answer their questions about any
         except Exception as e:
             print(f"TTS stream error: {e}")
     
+    def text_to_speech_with_timestamps(self, text: str) -> Optional[Dict[str, Any]]:
+        """
+        Convert text to speech with word-level timestamps for real-time sync.
+        Uses ElevenLabs with-timestamps endpoint.
+        
+        Returns:
+            {
+                "audio": base64_encoded_audio,
+                "alignment": {
+                    "characters": ["H", "e", "l", "l", "o", ...],
+                    "character_start_times_seconds": [0.0, 0.1, ...],
+                    "character_end_times_seconds": [0.1, 0.2, ...]
+                }
+            }
+        """
+        if not self.elevenlabs_available or not ELEVEN_LABS_API_KEY:
+            return None
+        
+        try:
+            headers = {
+                "Accept": "application/json",
+                "Content-Type": "application/json",
+                "xi-api-key": ELEVEN_LABS_API_KEY
+            }
+            
+            data = {
+                "text": text,
+                "model_id": "eleven_turbo_v2",
+                "voice_settings": {
+                    "stability": 0.5,
+                    "similarity_boost": 0.75,
+                    "style": 0.5,
+                    "use_speaker_boost": True
+                }
+            }
+            
+            # Use the with-timestamps endpoint
+            url = f"https://api.elevenlabs.io/v1/text-to-speech/{ELEVEN_LABS_VOICE_ID}/with-timestamps"
+            
+            response = requests.post(
+                url,
+                json=data,
+                headers=headers,
+                timeout=30
+            )
+            
+            if response.status_code == 200:
+                result = response.json()
+                # The response contains audio_base64 and alignment data
+                return {
+                    "audio": result.get("audio_base64"),
+                    "alignment": result.get("alignment", {})
+                }
+            else:
+                print(f"ElevenLabs timestamps API error: {response.status_code} - {response.text}")
+                return None
+                
+        except Exception as e:
+            print(f"TTS with timestamps error: {e}")
+            return None
+    
     def clear_history(self):
         """Clear conversation history but keep code context."""
         if self.code_context:

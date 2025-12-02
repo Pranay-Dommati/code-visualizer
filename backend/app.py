@@ -169,10 +169,13 @@ def teacher_speak():
     
     Request body:
     {
-        "text": "text to speak"
+        "text": "text to speak",
+        "format": "base64" or "binary",
+        "with_timestamps": true/false (optional)
     }
     
     Returns: audio/mpeg data or base64 encoded audio
+    If with_timestamps=true, also returns character-level alignment data
     """
     try:
         data = request.get_json()
@@ -182,9 +185,32 @@ def teacher_speak():
         
         text = data['text']
         return_format = data.get('format', 'base64')  # 'base64' or 'binary'
+        with_timestamps = data.get('with_timestamps', False)
         
         if not teacher.elevenlabs_available:
             return jsonify({"success": False, "error": "TTS not available"}), 503
+        
+        # Use timestamps endpoint if requested
+        if with_timestamps:
+            result = teacher.text_to_speech_with_timestamps(text)
+            if result:
+                return jsonify({
+                    "success": True,
+                    "audio": result["audio"],
+                    "alignment": result["alignment"],
+                    "format": "mp3"
+                })
+            else:
+                # Fallback to regular TTS without timestamps
+                audio_data = teacher.text_to_speech(text)
+                if audio_data:
+                    audio_base64 = base64.b64encode(audio_data).decode('utf-8')
+                    return jsonify({
+                        "success": True,
+                        "audio": audio_base64,
+                        "format": "mp3"
+                    })
+                return jsonify({"success": False, "error": "TTS generation failed"}), 500
         
         audio_data = teacher.text_to_speech(text)
         

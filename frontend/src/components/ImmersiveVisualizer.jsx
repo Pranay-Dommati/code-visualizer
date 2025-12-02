@@ -214,19 +214,101 @@ const ImmersiveVisualizer = ({
     }
   }, [chatMessages]);
 
-  // Animate text character by character while audio plays
-  const animateTextWithAudio = useCallback((textToAnimate, audioDuration, onComplete) => {
+  // Animate text using precise character timestamps from ElevenLabs
+  const animateTextWithTimestamps = useCallback((textToAnimate, alignment, audio, onComplete) => {
+    const baseDisplayed = displayedTextRef.current;
+    const prefix = baseDisplayed ? ' ' : '';
+    
+    // Get character timing arrays
+    const charStartTimes = alignment?.character_start_times_seconds || [];
+    const characters = alignment?.characters || [];
+    
+    if (charStartTimes.length === 0 || characters.length === 0) {
+      // Fallback to simple animation if no alignment data
+      return null;
+    }
+    
+    let animationFrame = null;
+    let lastCharIndex = 0;
+    
+    const updateText = () => {
+      if (!audio || audio.paused || audio.ended) {
+        // Audio stopped - show remaining text
+        displayedTextRef.current = baseDisplayed + prefix + textToAnimate;
+        setChatMessages(prev => {
+          const newMessages = [...prev];
+          if (newMessages.length > 0 && newMessages[newMessages.length - 1].role === 'assistant') {
+            newMessages[newMessages.length - 1] = {
+              role: 'assistant',
+              content: displayedTextRef.current,
+              isStreaming: true
+            };
+          }
+          return newMessages;
+        });
+        if (onComplete) onComplete();
+        return;
+      }
+      
+      const currentTime = audio.currentTime;
+      
+      // Find how many characters should be visible at current time
+      let visibleChars = 0;
+      for (let i = 0; i < charStartTimes.length; i++) {
+        if (charStartTimes[i] <= currentTime) {
+          visibleChars = i + 1;
+        } else {
+          break;
+        }
+      }
+      
+      // Only update if we have new characters to show
+      if (visibleChars > lastCharIndex) {
+        lastCharIndex = visibleChars;
+        const visibleText = characters.slice(0, visibleChars).join('');
+        const currentText = baseDisplayed + prefix + visibleText;
+        
+        setChatMessages(prev => {
+          const newMessages = [...prev];
+          if (newMessages.length > 0 && newMessages[newMessages.length - 1].role === 'assistant') {
+            newMessages[newMessages.length - 1] = {
+              role: 'assistant',
+              content: currentText,
+              isStreaming: true
+            };
+          }
+          return newMessages;
+        });
+      }
+      
+      // Continue animation
+      animationFrame = requestAnimationFrame(updateText);
+    };
+    
+    // Start the animation loop
+    animationFrame = requestAnimationFrame(updateText);
+    
+    // Return cleanup function
+    return () => {
+      if (animationFrame) {
+        cancelAnimationFrame(animationFrame);
+      }
+    };
+  }, []);
+
+  // Fallback: Animate text character by character based on audio duration
+  const animateTextWithDuration = useCallback((textToAnimate, audioDuration, onComplete) => {
     const baseDisplayed = displayedTextRef.current;
     const prefix = baseDisplayed ? ' ' : '';
     const fullText = prefix + textToAnimate;
     const charCount = fullText.length;
     
     // Calculate delay per character based on audio duration
-    // Use audio duration if available, otherwise estimate ~60ms per character
     const totalDuration = audioDuration ? audioDuration * 1000 : charCount * 60;
-    const delayPerChar = Math.max(20, totalDuration / charCount); // At least 20ms per char
+    const delayPerChar = Math.max(15, totalDuration / charCount);
     
     let currentIndex = 0;
+    let timeoutId = null;
     
     const animateNext = () => {
       if (currentIndex < charCount) {
@@ -245,24 +327,27 @@ const ImmersiveVisualizer = ({
           return newMessages;
         });
         
-        setTimeout(animateNext, delayPerChar);
+        timeoutId = setTimeout(animateNext, delayPerChar);
       } else {
-        // Animation complete - update the ref
         displayedTextRef.current = baseDisplayed + fullText;
         if (onComplete) onComplete();
       }
     };
     
     animateNext();
+    
+    // Return cleanup function
+    return () => {
+      if (timeoutId) clearTimeout(timeoutId);
+    };
   }, []);
 
-  // Play next audio in queue - reveals text character by character as it speaks
+  // Play next audio in queue - reveals text in sync with speech
   const playNextInQueue = useCallback(async () => {
     if (audioQueueRef.current.length === 0) {
       isPlayingQueueRef.current = false;
       setIsTeacherSpeaking(false);
       setIsVoiceMode(false);
-      // Make sure to mark as not streaming when done
       setChatMessages(prev => {
         const newMessages = [...prev];
         if (newMessages.length > 0 && newMessages[newMessages.length - 1].role === 'assistant') {
@@ -280,17 +365,22 @@ const ImmersiveVisualizer = ({
     setIsTeacherSpeaking(true);
     
     const textToSpeak = audioQueueRef.current.shift();
+    let cleanupAnimation = null;
     
     try {
+      // Request audio WITH timestamps for precise sync
       const response = await fetch(`${API_BASE_URL}/teacher/speak`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: textToSpeak, format: 'base64' })
+        body: JSON.stringify({ 
+          text: textToSpeak, 
+          format: 'base64',
+          with_timestamps: true 
+        })
       });
       
       if (!response.ok) {
-        // No audio - animate text at default speed then continue
-        animateTextWithAudio(textToSpeak, null, () => {
+        cleanupAnimation = animateTextWithDuration(textToSpeak, null, () => {
           setTimeout(() => playNextInQueue(), 200);
         });
         return;
@@ -302,19 +392,42 @@ const ImmersiveVisualizer = ({
         const audio = new Audio(`data:audio/mpeg;base64,${data.audio}`);
         audioRef.current = audio;
         
-        // Start animating text when audio starts
+        // Check if we have alignment data for precise sync
+        const hasAlignment = data.alignment && 
+          data.alignment.character_start_times_seconds && 
+          data.alignment.character_start_times_seconds.length > 0;
+        
         audio.onplay = () => {
-          // Get audio duration and animate text to match
-          const duration = audio.duration || (textToSpeak.length * 0.06); // Estimate if not available
-          animateTextWithAudio(textToSpeak, duration, null);
+          if (hasAlignment) {
+            // Use precise character-level sync
+            cleanupAnimation = animateTextWithTimestamps(textToSpeak, data.alignment, audio, null);
+          } else {
+            // Fallback to duration-based animation
+            const duration = audio.duration || (textToSpeak.length * 0.06);
+            cleanupAnimation = animateTextWithDuration(textToSpeak, duration, null);
+          }
         };
         
         audio.onended = () => {
+          if (cleanupAnimation) cleanupAnimation();
+          // Ensure full text is shown
+          displayedTextRef.current += (displayedTextRef.current ? ' ' : '') + textToSpeak;
+          setChatMessages(prev => {
+            const newMessages = [...prev];
+            if (newMessages.length > 0 && newMessages[newMessages.length - 1].role === 'assistant') {
+              newMessages[newMessages.length - 1] = {
+                role: 'assistant',
+                content: displayedTextRef.current,
+                isStreaming: audioQueueRef.current.length > 0
+              };
+            }
+            return newMessages;
+          });
           playNextInQueue();
         };
         
         audio.onerror = () => {
-          // On error, finish text animation and continue
+          if (cleanupAnimation) cleanupAnimation();
           displayedTextRef.current += (displayedTextRef.current ? ' ' : '') + textToSpeak;
           setChatMessages(prev => {
             const newMessages = [...prev];
@@ -334,25 +447,22 @@ const ImmersiveVisualizer = ({
           await audio.play();
         } catch (playErr) {
           console.error('Audio play failed:', playErr);
-          // Animate text without audio
-          animateTextWithAudio(textToSpeak, null, () => {
+          cleanupAnimation = animateTextWithDuration(textToSpeak, null, () => {
             setTimeout(() => playNextInQueue(), 200);
           });
         }
       } else {
-        // No audio data - animate text then continue
-        animateTextWithAudio(textToSpeak, null, () => {
+        cleanupAnimation = animateTextWithDuration(textToSpeak, null, () => {
           setTimeout(() => playNextInQueue(), 200);
         });
       }
     } catch (err) {
       console.error('TTS fetch error:', err);
-      // On error, animate text and continue
-      animateTextWithAudio(textToSpeak, null, () => {
+      cleanupAnimation = animateTextWithDuration(textToSpeak, null, () => {
         setTimeout(() => playNextInQueue(), 200);
       });
     }
-  }, [animateTextWithAudio]);
+  }, [animateTextWithTimestamps, animateTextWithDuration]);
 
   // Queue text for TTS (splits by sentences) - only used in voice mode
   const queueForSpeech = useCallback((fullText) => {
