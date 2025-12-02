@@ -36,6 +36,7 @@ function App() {
 
   // Detect inputs in the code
   const detectInputs = useCallback(async (codeToCheck) => {
+    console.log('detectInputs: Starting fetch to', `${API_BASE_URL}/detect-inputs`);
     try {
       const response = await fetch(`${API_BASE_URL}/detect-inputs`, {
         method: 'POST',
@@ -43,10 +44,12 @@ function App() {
         body: JSON.stringify({ code: codeToCheck })
       });
       
+      console.log('detectInputs: Response status:', response.status);
       const data = await response.json();
+      console.log('detectInputs: Data received:', data);
       return data;
     } catch (err) {
-      console.error('Failed to detect inputs:', err);
+      console.error('detectInputs: Failed:', err);
       return { hasInputs: false, inputs: [], count: 0, codeType: 'script' };
     }
   }, []);
@@ -198,22 +201,32 @@ function App() {
 
   // Handle start visualization button click
   const handleStartVisualization = useCallback(async () => {
-    if (!code.trim()) return;
+    console.log('=== START VISUALIZATION CLICKED ===');
+    console.log('Code length:', code.length);
+    
+    if (!code.trim()) {
+      console.log('No code, returning');
+      return;
+    }
     
     setError(null);
     setLoadingPhase(0);
     
+    console.log('Detecting inputs...');
     // First, detect if the code needs any inputs
     const inputDetection = await detectInputs(code);
+    console.log('Input detection result:', inputDetection);
     
     // Store metadata for later use
     setCodeMetadata(inputDetection);
     
     if (inputDetection.hasInputs && inputDetection.count > 0) {
+      console.log('Showing input modal');
       // Show modal to collect inputs
       setDetectedInputs(inputDetection.inputs);
       setShowInputModal(true);
     } else {
+      console.log('No inputs needed, running trace directly');
       // No inputs needed, run directly
       runTrace([], inputDetection);
     }

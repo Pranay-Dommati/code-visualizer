@@ -7,6 +7,9 @@ Endpoints:
 - POST /api/trace - Trace Python code and return execution frames
 - POST /api/validate - Validate code without executing
 - POST /api/detect-inputs - Detect input() calls in code
+- POST /api/teacher/context - Set AI Teacher context
+- POST /api/teacher/chat - Chat with AI Teacher
+- POST /api/teacher/speak - Text-to-speech
 - GET /api/health - Health check
 """
 
@@ -15,15 +18,18 @@ from flask_cors import CORS
 from tracer import trace_code
 from sandbox import validate_code
 from ai_narrator import get_narrator, generate_narration
+from ai_teacher import get_teacher
 import json
 import ast
 import re
 import time
+import base64
 
 app = Flask(__name__)
 
-# Initialize AI Narrator at startup
+# Initialize AI services at startup
 narrator = get_narrator()
+teacher = get_teacher()
 
 # Enable CORS for frontend
 CORS(app, resources={
@@ -42,8 +48,179 @@ def health_check():
         "status": "healthy",
         "service": "Python Code Visualizer API",
         "version": "1.0.0",
-        "ai_narrator": narrator.is_available
+        "ai_narrator": narrator.is_available,
+        "ai_teacher": teacher.gemini_available,
+        "tts_available": teacher.elevenlabs_available
     })
+
+
+# ==================== AI Teacher Endpoints ====================
+
+@app.route('/api/teacher/context', methods=['POST'])
+def teacher_set_context():
+    """
+    Set the code execution context for AI Teacher.
+    This should be called when visualization starts.
+    
+    Request body:
+    {
+        "code": "python code string",
+        "codeLines": ["line1", "line2", ...],
+        "steps": [execution steps array]
+    }
+    """
+    try:
+        data = request.get_json()
+        
+        if not data:
+            return jsonify({"success": False, "error": "No data provided"}), 400
+        
+        code = data.get('code', '')
+        code_lines = data.get('codeLines', code.split('\n') if code else [])
+        steps = data.get('steps', [])
+        
+        teacher.set_context(code, code_lines, steps)
+        
+        return jsonify({
+            "success": True,
+            "message": "Context set successfully",
+            "steps_loaded": len(steps)
+        })
+        
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route('/api/teacher/chat', methods=['POST'])
+def teacher_chat():
+    """
+    Chat with AI Teacher. Returns streaming text response.
+    
+    Request body:
+    {
+        "message": "user's question",
+        "currentStepIndex": 5 (optional)
+    }
+    """
+    try:
+        data = request.get_json()
+        
+        if not data or 'message' not in data:
+            return jsonify({"success": False, "error": "No message provided"}), 400
+        
+        message = data['message']
+        current_step = data.get('currentStepIndex')
+        
+        def generate_response():
+            for chunk in teacher.chat(message, current_step):
+                yield f"data: {json.dumps({'type': 'text', 'content': chunk})}\n\n"
+            yield f"data: {json.dumps({'type': 'done'})}\n\n"
+        
+        return Response(
+            generate_response(),
+            mimetype='text/event-stream',
+            headers={
+                'Cache-Control': 'no-cache',
+                'Connection': 'keep-alive',
+                'Access-Control-Allow-Origin': '*'
+            }
+        )
+        
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route('/api/teacher/chat-sync', methods=['POST'])
+def teacher_chat_sync():
+    """
+    Chat with AI Teacher. Returns complete response (non-streaming).
+    Good for getting response before TTS.
+    
+    Request body:
+    {
+        "message": "user's question",
+        "currentStepIndex": 5 (optional)
+    }
+    """
+    try:
+        data = request.get_json()
+        
+        if not data or 'message' not in data:
+            return jsonify({"success": False, "error": "No message provided"}), 400
+        
+        message = data['message']
+        current_step = data.get('currentStepIndex')
+        
+        response = teacher.chat_sync(message, current_step)
+        
+        return jsonify({
+            "success": True,
+            "response": response
+        })
+        
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route('/api/teacher/speak', methods=['POST'])
+def teacher_speak():
+    """
+    Convert text to speech using ElevenLabs.
+    
+    Request body:
+    {
+        "text": "text to speak"
+    }
+    
+    Returns: audio/mpeg data or base64 encoded audio
+    """
+    try:
+        data = request.get_json()
+        
+        if not data or 'text' not in data:
+            return jsonify({"success": False, "error": "No text provided"}), 400
+        
+        text = data['text']
+        return_format = data.get('format', 'base64')  # 'base64' or 'binary'
+        
+        if not teacher.elevenlabs_available:
+            return jsonify({"success": False, "error": "TTS not available"}), 503
+        
+        audio_data = teacher.text_to_speech(text)
+        
+        if audio_data:
+            if return_format == 'binary':
+                return Response(
+                    audio_data,
+                    mimetype='audio/mpeg',
+                    headers={'Content-Disposition': 'inline'}
+                )
+            else:
+                # Return as base64
+                audio_base64 = base64.b64encode(audio_data).decode('utf-8')
+                return jsonify({
+                    "success": True,
+                    "audio": audio_base64,
+                    "format": "mp3"
+                })
+        else:
+            return jsonify({"success": False, "error": "TTS generation failed"}), 500
+        
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route('/api/teacher/clear', methods=['POST'])
+def teacher_clear():
+    """Clear AI Teacher conversation history."""
+    try:
+        teacher.clear_history()
+        return jsonify({"success": True, "message": "History cleared"})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+# ==================== End AI Teacher Endpoints ====================
 
 
 @app.route('/api/detect-inputs', methods=['POST'])
