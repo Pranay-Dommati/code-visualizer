@@ -1,4 +1,6 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
+import StepInlineChat from './StepInlineChat';
+import useStepChat from '../hooks/useStepChat';
 
 const API_BASE_URL = 'http://localhost:5000/api';
 
@@ -29,6 +31,16 @@ const ImmersiveVisualizer = ({
   const [isVoiceMode, setIsVoiceMode] = useState(false); // Track if current message is voice mode
   const [isConversationMode, setIsConversationMode] = useState(false); // Continuous voice loop
   
+  // Guided narration state
+  const [isGuidedMode, setIsGuidedMode] = useState(true); // Enable guided narration by default
+  const [isNarratingStep, setIsNarratingStep] = useState(false); // Currently narrating a step
+  const [narratedStepIndex, setNarratedStepIndex] = useState(-1); // Which step has been narrated
+  const [waitingForUserInput, setWaitingForUserInput] = useState(false); // Waiting for "next" or question
+  const [stepExplanationText, setStepExplanationText] = useState({}); // Text being typed for each step
+  
+  // Step inline chat state
+  const [stepChatListening, setStepChatListening] = useState(null); // Which step is listening for voice
+  
   const scrollContainerRef = useRef(null);
   const latestStepRef = useRef(null);
   const playIntervalRef = useRef(null);
@@ -41,6 +53,85 @@ const ImmersiveVisualizer = ({
   const pendingTextRef = useRef('');
   const displayedTextRef = useRef(''); // For voice mode - text shown so far
   const shouldAutoListenRef = useRef(false); // Track if we should auto-listen after speaking
+  const currentNarrationStepRef = useRef(-1); // Track which step is being narrated
+  const stepChatRecognitionRef = useRef(null); // Separate recognition for step chats
+  
+  // Use the step chat hook
+  const {
+    stepConversations,
+    activeStepChat,
+    isStepChatSpeaking,
+    speakingStepIndex,
+    getStepConversation,
+    sendStepMessage,
+    clearAllConversations,
+    stopStepSpeaking,
+    setActiveStepChat,
+  } = useStepChat({ steps, code, codeLines });
+
+  // Step chat voice input functions
+  const startStepChatListening = useCallback((stepIndex) => {
+    if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
+      alert('Speech recognition is not supported in your browser.');
+      return;
+    }
+    
+    // Stop any other listening
+    if (recognitionRef.current) {
+      recognitionRef.current.stop();
+    }
+    if (stepChatRecognitionRef.current) {
+      stepChatRecognitionRef.current.stop();
+    }
+    
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    const recognition = new SpeechRecognition();
+    
+    recognition.continuous = false;
+    recognition.interimResults = true;
+    recognition.lang = 'en-US';
+    
+    let finalTranscript = '';
+    
+    recognition.onstart = () => {
+      setStepChatListening(stepIndex);
+    };
+    
+    recognition.onresult = (event) => {
+      let interim = '';
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const transcript = event.results[i][0].transcript;
+        if (event.results[i].isFinal) {
+          finalTranscript += transcript;
+        } else {
+          interim += transcript;
+        }
+      }
+    };
+    
+    recognition.onend = () => {
+      setStepChatListening(null);
+      if (finalTranscript.trim()) {
+        sendStepMessage(stepIndex, finalTranscript.trim());
+      }
+    };
+    
+    recognition.onerror = (event) => {
+      console.error('Step chat recognition error:', event.error);
+      setStepChatListening(null);
+    };
+    
+    stepChatRecognitionRef.current = recognition;
+    recognition.start();
+  }, [sendStepMessage]);
+
+  const stopStepChatListening = useCallback(() => {
+    if (stepChatRecognitionRef.current) {
+      stepChatRecognitionRef.current.stop();
+      stepChatRecognitionRef.current = null;
+    }
+    setStepChatListening(null);
+  }, []);
 
   // Reset when opened
   useEffect(() => {
@@ -50,9 +141,17 @@ const ImmersiveVisualizer = ({
       prevStepsLengthRef.current = 0;
       setChatMessages([]);
       setTeacherContextSet(false);
+      // Reset guided narration state
+      setIsNarratingStep(false);
+      setNarratedStepIndex(-1);
+      setWaitingForUserInput(false);
+      setStepExplanationText({});
+      currentNarrationStepRef.current = -1;
+      // Clear step conversations
+      clearAllConversations();
       // Don't auto-play yet, wait for steps to stream in
     }
-  }, [isOpen, isLoading]);
+  }, [isOpen, isLoading, clearAllConversations]);
 
   // Set AI Teacher context when steps are loaded
   useEffect(() => {
@@ -90,7 +189,7 @@ const ImmersiveVisualizer = ({
     }
   }, [isOpen, isLoading, isStreaming, steps, code, codeLines]);
 
-  // Handle streaming steps - show them as they arrive
+  // Handle streaming steps - in guided mode, only show first step initially
   useEffect(() => {
     if (!isOpen || isLoading) return;
     
@@ -100,25 +199,39 @@ const ImmersiveVisualizer = ({
       // New steps have arrived via streaming
       setIsStreaming(true);
       
-      // Add the new steps to visible steps
-      const newSteps = steps.slice(prevStepsLengthRef.current);
-      setVisibleSteps(prev => [...prev, ...newSteps]);
-      setCurrentStepIndex(steps.length - 1);
+      if (isGuidedMode) {
+        // In guided mode, only show first step when it arrives
+        if (prevStepsLengthRef.current === 0 && steps.length > 0) {
+          setVisibleSteps([steps[0]]);
+          setCurrentStepIndex(0);
+        }
+        // Don't auto-add more steps - they'll be added when user says "next"
+      } else {
+        // Not guided mode - add all new steps
+        const newSteps = steps.slice(prevStepsLengthRef.current);
+        setVisibleSteps(prev => [...prev, ...newSteps]);
+        setCurrentStepIndex(steps.length - 1);
+      }
       
       prevStepsLengthRef.current = steps.length;
     }
-  }, [steps, isOpen, isLoading]);
+  }, [steps, isOpen, isLoading, isGuidedMode]);
 
   // Start auto-play after streaming is done (user can still pause/play)
   useEffect(() => {
-    if (isStreaming && steps.length > 0 && visibleSteps.length === steps.length) {
-      // All steps have been received and shown
+    if (isStreaming && steps.length > 0 && (visibleSteps.length === steps.length || isGuidedMode)) {
+      // All steps have been received (or in guided mode, we've started)
       setIsStreaming(false);
     }
   }, [isStreaming, steps.length, visibleSteps.length]);
 
-  // Auto-play logic (for manual playback control after streaming)
+  // Auto-play logic (for manual playback control after streaming) - disabled in guided mode
   useEffect(() => {
+    // Skip auto-play in guided mode
+    if (isGuidedMode) {
+      return () => clearTimeout(playIntervalRef.current);
+    }
+    
     if (isPlaying && !isStreaming && currentStepIndex < steps.length - 1) {
       playIntervalRef.current = setTimeout(() => {
         const nextIndex = currentStepIndex + 1;
@@ -136,7 +249,7 @@ const ImmersiveVisualizer = ({
     }
 
     return () => clearTimeout(playIntervalRef.current);
-  }, [isPlaying, isStreaming, currentStepIndex, steps, playbackSpeed]);
+  }, [isPlaying, isStreaming, currentStepIndex, steps, playbackSpeed, isGuidedMode]);
 
   // Auto-scroll to latest step only if user is near the bottom
   useEffect(() => {
@@ -529,6 +642,230 @@ const ImmersiveVisualizer = ({
     setIsVoiceMode(false);
   }, []);
 
+  // ============ GUIDED STEP NARRATION ============
+  
+  // Narrate a step's explanation with synchronized text and voice
+  const narrateStepExplanation = useCallback(async (stepIndex, explanation) => {
+    if (!explanation || isNarratingStep) return;
+    
+    setIsNarratingStep(true);
+    currentNarrationStepRef.current = stepIndex;
+    setStepExplanationText(prev => ({ ...prev, [stepIndex]: '' }));
+    
+    // Extract only the narrative part (before DRY-RUN section) for TTS
+    const dryRunIndex = explanation.toUpperCase().indexOf('DRY-RUN:');
+    const narrativeText = dryRunIndex > -1 ? explanation.substring(0, dryRunIndex).trim() : explanation.trim();
+    
+    // Split into sentences for TTS
+    const sentences = narrativeText.split(/(?<=[.!?])\s+/).filter(s => s.trim());
+    if (sentences.length === 0) sentences.push(narrativeText);
+    
+    let displayedText = '';
+    
+    // Process each sentence
+    for (let i = 0; i < sentences.length; i++) {
+      const sentence = sentences[i].trim();
+      if (!sentence) continue;
+      
+      try {
+        // Get TTS with timestamps
+        const response = await fetch(`${API_BASE_URL}/teacher/speak`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ 
+            text: sentence, 
+            format: 'base64',
+            with_timestamps: true 
+          })
+        });
+        
+        if (!response.ok) {
+          // No audio - just show text
+          displayedText += (displayedText ? ' ' : '') + sentence;
+          setStepExplanationText(prev => ({ ...prev, [stepIndex]: displayedText }));
+          continue;
+        }
+        
+        const data = await response.json();
+        
+        if (data.success && data.audio) {
+          const audio = new Audio(`data:audio/mpeg;base64,${data.audio}`);
+          audioRef.current = audio;
+          
+          const hasAlignment = data.alignment?.character_start_times_seconds?.length > 0;
+          const characters = data.alignment?.characters || [];
+          const charStartTimes = data.alignment?.character_start_times_seconds || [];
+          
+          // Create a promise that resolves when audio ends
+          await new Promise((resolve) => {
+            const baseText = displayedText;
+            const prefix = baseText ? ' ' : '';
+            let animationFrame = null;
+            
+            if (hasAlignment) {
+              // Animate with timestamps
+              const updateText = () => {
+                if (audio.paused || audio.ended) {
+                  displayedText = baseText + prefix + sentence;
+                  setStepExplanationText(prev => ({ ...prev, [stepIndex]: displayedText }));
+                  if (animationFrame) cancelAnimationFrame(animationFrame);
+                  return;
+                }
+                
+                const currentTime = audio.currentTime;
+                let visibleChars = 0;
+                for (let j = 0; j < charStartTimes.length; j++) {
+                  if (charStartTimes[j] <= currentTime) {
+                    visibleChars = j + 1;
+                  } else break;
+                }
+                
+                const visibleText = characters.slice(0, visibleChars).join('');
+                setStepExplanationText(prev => ({ 
+                  ...prev, 
+                  [stepIndex]: baseText + prefix + visibleText 
+                }));
+                
+                animationFrame = requestAnimationFrame(updateText);
+              };
+              
+              audio.onplay = () => {
+                animationFrame = requestAnimationFrame(updateText);
+              };
+            } else {
+              // Fallback: animate based on duration
+              audio.onplay = () => {
+                const duration = audio.duration || (sentence.length * 0.06);
+                const delayPerChar = Math.max(15, (duration * 1000) / sentence.length);
+                let charIndex = 0;
+                
+                const animateChar = () => {
+                  if (charIndex < sentence.length && !audio.paused && !audio.ended) {
+                    charIndex++;
+                    setStepExplanationText(prev => ({ 
+                      ...prev, 
+                      [stepIndex]: baseText + prefix + sentence.substring(0, charIndex) 
+                    }));
+                    setTimeout(animateChar, delayPerChar);
+                  }
+                };
+                animateChar();
+              };
+            }
+            
+            audio.onended = () => {
+              if (animationFrame) cancelAnimationFrame(animationFrame);
+              displayedText = baseText + prefix + sentence;
+              setStepExplanationText(prev => ({ ...prev, [stepIndex]: displayedText }));
+              resolve();
+            };
+            
+            audio.onerror = () => {
+              if (animationFrame) cancelAnimationFrame(animationFrame);
+              displayedText = baseText + prefix + sentence;
+              setStepExplanationText(prev => ({ ...prev, [stepIndex]: displayedText }));
+              resolve();
+            };
+            
+            audio.play().catch(() => {
+              displayedText = baseText + prefix + sentence;
+              setStepExplanationText(prev => ({ ...prev, [stepIndex]: displayedText }));
+              resolve();
+            });
+          });
+        } else {
+          // No audio data
+          displayedText += (displayedText ? ' ' : '') + sentence;
+          setStepExplanationText(prev => ({ ...prev, [stepIndex]: displayedText }));
+        }
+      } catch (err) {
+        console.error('Narration error:', err);
+        displayedText += (displayedText ? ' ' : '') + sentence;
+        setStepExplanationText(prev => ({ ...prev, [stepIndex]: displayedText }));
+      }
+    }
+    
+    setIsNarratingStep(false);
+    setNarratedStepIndex(stepIndex);
+    currentNarrationStepRef.current = -1;
+    
+    console.log('Narration ended for step:', stepIndex, 'Total steps:', steps.length, 'isGuidedMode:', isGuidedMode);
+    
+    // After narration, wait for user input (if in guided mode and not last step)
+    if (isGuidedMode && stepIndex < steps.length - 1) {
+      console.log('Setting up waiting for user input...');
+      setWaitingForUserInput(true);
+      // Enable listening for voice commands
+      shouldAutoListenRef.current = true;
+      setIsConversationMode(true);
+      // Small delay then start listening
+      setTimeout(() => {
+        console.log('Dispatching autoStartListening event, shouldAutoListen:', shouldAutoListenRef.current);
+        if (shouldAutoListenRef.current) {
+          const listenEvent = new CustomEvent('autoStartListening');
+          window.dispatchEvent(listenEvent);
+        }
+      }, 800);
+    } else {
+      console.log('NOT setting up waiting - isGuidedMode:', isGuidedMode, 'isLastStep:', stepIndex >= steps.length - 1);
+    }
+  }, [isNarratingStep, isGuidedMode, steps]);
+
+  // Handle user response during guided mode
+  const handleGuidedUserInput = useCallback((userMessage) => {
+    const lowerMessage = userMessage.toLowerCase().trim();
+    
+    // Check if user wants to continue to next step
+    const continueKeywords = ['next', 'continue', 'go on', 'proceed', 'yes', 'okay', 'ok', 'sure', 'move on', 'next step'];
+    const wantsToContinue = continueKeywords.some(kw => lowerMessage.includes(kw));
+    
+    if (wantsToContinue && waitingForUserInput) {
+      // Move to next step
+      setWaitingForUserInput(false);
+      moveToNextStep();
+    } else {
+      // User has a question - open AI Teacher and answer it
+      setLeftPanelTab('teacher');
+      // The voice message will be handled by the regular sendVoiceMessage
+    }
+  }, [waitingForUserInput]);
+
+  // Move to next step (called after user says "next" or clicks button)
+  const moveToNextStep = useCallback(() => {
+    setWaitingForUserInput(false);
+    
+    const nextIndex = currentStepIndex + 1;
+    if (nextIndex < steps.length) {
+      setCurrentStepIndex(nextIndex);
+      setVisibleSteps(prev => {
+        if (prev.length <= nextIndex) {
+          return [...prev, steps[nextIndex]];
+        }
+        return prev;
+      });
+      
+      // Narrate the new step after a short delay
+      setTimeout(() => {
+        if (steps[nextIndex]?.explanation) {
+          narrateStepExplanation(nextIndex, steps[nextIndex].explanation);
+        }
+      }, 500);
+    }
+  }, [currentStepIndex, steps, narrateStepExplanation]);
+
+  // Start guided narration when first step appears
+  useEffect(() => {
+    if (isGuidedMode && visibleSteps.length === 1 && narratedStepIndex === -1 && !isNarratingStep && !isLoading) {
+      const firstStep = visibleSteps[0];
+      if (firstStep?.explanation) {
+        // Small delay to let the UI render
+        setTimeout(() => {
+          narrateStepExplanation(0, firstStep.explanation);
+        }, 1000);
+      }
+    }
+  }, [isGuidedMode, visibleSteps, narratedStepIndex, isNarratingStep, isLoading, narrateStepExplanation]);
+
   // Send message to AI Teacher (TEXT MODE - no voice)
   const sendMessage = useCallback(async () => {
     if (!chatInput.trim() || isTeacherThinking) return;
@@ -708,14 +1045,23 @@ const ImmersiveVisualizer = ({
   // Handle auto-listen event
   useEffect(() => {
     const handleAutoListen = () => {
-      if (shouldAutoListenRef.current && !isTeacherThinking && !isTeacherSpeaking && !isListening) {
+      console.log('Auto-listen event received. Checking conditions:', {
+        shouldAutoListen: shouldAutoListenRef.current,
+        isTeacherThinking,
+        isTeacherSpeaking,
+        isListening,
+        isNarratingStep
+      });
+      
+      if (shouldAutoListenRef.current && !isTeacherThinking && !isTeacherSpeaking && !isListening && !isNarratingStep) {
+        console.log('Starting listening...');
         startListening();
       }
     };
     
     window.addEventListener('autoStartListening', handleAutoListen);
     return () => window.removeEventListener('autoStartListening', handleAutoListen);
-  }, [startListening, isTeacherThinking, isTeacherSpeaking, isListening]);
+  }, [startListening, isTeacherThinking, isTeacherSpeaking, isListening, isNarratingStep]);
 
   // Cleanup recognition on unmount
   useEffect(() => {
@@ -736,6 +1082,10 @@ const ImmersiveVisualizer = ({
     
     // Stop any ongoing speech
     stopSpeaking();
+    
+    // Ensure conversation mode stays active for continuous voice interaction
+    shouldAutoListenRef.current = true;
+    setIsConversationMode(true);
     
     setChatInput('');
     setChatMessages(prev => [...prev, { role: 'user', content: message }]);
@@ -813,19 +1163,44 @@ const ImmersiveVisualizer = ({
     }
   }, [isTeacherThinking, currentStepIndex, queueForSpeech, stopSpeaking]);
 
-  // Handle voice message send event - must be after sendVoiceMessage is defined
+  // Handle voice message send event - check for guided mode commands first
   useEffect(() => {
     const handleVoiceSend = (e) => {
       const message = e.detail;
-      console.log('Voice send event received:', message); // Debug log
-      if (message && !isTeacherThinking) {
+      console.log('Voice send event received:', message);
+      
+      if (!message) return;
+      
+      const lowerMessage = message.toLowerCase().trim();
+      
+      // Check if we're in guided mode waiting for input
+      if (isGuidedMode && waitingForUserInput) {
+        // Check for "next step" keywords
+        const continueKeywords = ['next', 'continue', 'go on', 'proceed', 'yes', 'okay', 'ok', 'sure', 'move on', 'next step', 'go ahead', 'let\'s go', 'let\'s continue'];
+        const wantsToContinue = continueKeywords.some(kw => lowerMessage.includes(kw));
+        
+        if (wantsToContinue) {
+          console.log('User wants to continue to next step');
+          moveToNextStep();
+          return;
+        }
+        
+        // User has a question - switch to AI Teacher tab and answer
+        // Keep shouldAutoListenRef true so we'll resume listening after AI answers
+        console.log('User has a question, opening AI Teacher (will resume listening after)');
+        setLeftPanelTab('teacher');
+        // Don't turn off waitingForUserInput - we'll restore it after AI answers
+      }
+      
+      // Normal voice message handling
+      if (!isTeacherThinking) {
         sendVoiceMessage(message);
       }
     };
     
     window.addEventListener('voiceSendMessage', handleVoiceSend);
     return () => window.removeEventListener('voiceSendMessage', handleVoiceSend);
-  }, [isTeacherThinking, sendVoiceMessage]);
+  }, [isTeacherThinking, sendVoiceMessage, isGuidedMode, waitingForUserInput, moveToNextStep]);
 
   // Handle Enter key in chat input
   const handleChatKeyDown = (e) => {
@@ -1014,6 +1389,74 @@ const ImmersiveVisualizer = ({
     return result;
   };
 
+  // Extract just the text explanation (before DRY-RUN) for narration
+  const extractNarrativeText = (explanation) => {
+    if (!explanation) return '';
+    const dryRunIndex = explanation.toUpperCase().indexOf('DRY-RUN:');
+    if (dryRunIndex > -1) {
+      return explanation.substring(0, dryRunIndex).trim();
+    }
+    return explanation.trim();
+  };
+
+  // Extract just the DRY-RUN section from explanation
+  const extractDryRunSection = (explanation) => {
+    if (!explanation) return null;
+    const dryRunMatch = explanation.match(/DRY-RUN:\s*([\s\S]*?)(?:$)/i);
+    return dryRunMatch ? dryRunMatch[1].trim() : null;
+  };
+
+  // Render just the dry-run box (for use when text is animated separately)
+  const renderDryRunBox = (dryRunContent) => {
+    if (!dryRunContent) return null;
+    
+    const dryRunLines = dryRunContent.split('\n').filter(line => line.trim());
+    
+    return (
+      <div className="mt-3 bg-slate-900/80 rounded-xl p-4 border border-yellow-500/30">
+        <div className="flex items-center gap-2 mb-2">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-yellow-400">
+            <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>
+          </svg>
+          <span className="text-xs font-semibold text-yellow-400 uppercase tracking-wider">Dry Run</span>
+        </div>
+        <div className="font-mono text-sm space-y-1">
+          {dryRunLines.map((line, idx) => {
+            // Style based on content
+            let lineClass = 'text-slate-300';
+            
+            // True result - green
+            if (line.includes('True') || line.includes('✓') || line.includes('executes')) {
+              lineClass = 'text-green-400 font-semibold';
+            }
+            // False result - red/orange
+            else if (line.includes('False') || line.includes('skipped')) {
+              lineClass = 'text-orange-400';
+            }
+            // Arrow or assignment result
+            else if (line.includes('→') || (line.includes('=') && !line.includes('=='))) {
+              lineClass = 'text-teal-300';
+            }
+            // Comparison/condition
+            else if (line.includes('>') || line.includes('<') || line.includes('==')) {
+              lineClass = 'text-blue-300';
+            }
+            // "so" explanations
+            else if (line.toLowerCase().startsWith('so ')) {
+              lineClass = 'text-slate-400 italic';
+            }
+            
+            return (
+              <div key={idx} className={lineClass}>
+                {line}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  };
+
   // Render explanation with styled dry-run section
   const renderExplanationWithDryRun = (explanation) => {
     if (!explanation) return null;
@@ -1118,28 +1561,55 @@ const ImmersiveVisualizer = ({
 
         {/* Playback Controls */}
         <div className="flex items-center gap-3">
-          {/* Speed Control */}
-          <div className="flex items-center gap-2 bg-slate-800 rounded-xl px-3 py-1.5">
-            <span className="text-xs text-slate-400">Speed:</span>
-            {[
-              { label: '0.5x', value: 4000 },
-              { label: '1x', value: 2000 },
-              { label: '2x', value: 1000 },
-              { label: '3x', value: 600 },
-            ].map(({ label, value }) => (
-              <button
-                key={value}
-                onClick={() => handleSpeedChange(value)}
-                className={`px-2 py-0.5 text-xs rounded-lg transition-all ${
-                  playbackSpeed === value
-                    ? 'bg-teal-500 text-white'
-                    : 'text-slate-400 hover:text-white'
-                }`}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
+          {/* Guided Mode Toggle */}
+          <button
+            onClick={() => {
+              setIsGuidedMode(!isGuidedMode);
+              if (isGuidedMode) {
+                // Turning off guided mode - stop narration
+                shouldAutoListenRef.current = false;
+                setIsConversationMode(false);
+                setWaitingForUserInput(false);
+              }
+            }}
+            className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-medium transition-all ${
+              isGuidedMode
+                ? 'bg-purple-500/20 text-purple-400 border border-purple-500/30'
+                : 'bg-slate-800 text-slate-400 hover:text-slate-300'
+            }`}
+            title={isGuidedMode ? "Guided mode: AI narrates each step" : "Enable guided narration"}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+              <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+            </svg>
+            <span>{isGuidedMode ? 'Guided' : 'Auto'}</span>
+          </button>
+
+          {/* Speed Control - only shown when not in guided mode */}
+          {!isGuidedMode && (
+            <div className="flex items-center gap-2 bg-slate-800 rounded-xl px-3 py-1.5">
+              <span className="text-xs text-slate-400">Speed:</span>
+              {[
+                { label: '0.5x', value: 4000 },
+                { label: '1x', value: 2000 },
+                { label: '2x', value: 1000 },
+                { label: '3x', value: 600 },
+              ].map(({ label, value }) => (
+                <button
+                  key={value}
+                  onClick={() => handleSpeedChange(value)}
+                  className={`px-2 py-0.5 text-xs rounded-lg transition-all ${
+                    playbackSpeed === value
+                      ? 'bg-teal-500 text-white'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          )}
 
           {/* Play/Pause - disabled during streaming */}
           <button
@@ -1628,11 +2098,13 @@ const ImmersiveVisualizer = ({
                           </div>
                         </div>
 
-                        {/* AI Explanation with Dry-Run */}
+                        {/* AI Explanation with Dry-Run - Animated during narration */}
                         {step.explanation && (
                           <div className="px-5 py-4 border-b border-slate-700/50">
                             <div className="flex items-start gap-3">
-                              <div className="flex-shrink-0 w-10 h-10 rounded-full bg-gradient-to-br from-teal-500 to-blue-500 flex items-center justify-center">
+                              <div className={`flex-shrink-0 w-10 h-10 rounded-full bg-gradient-to-br from-teal-500 to-blue-500 flex items-center justify-center ${
+                                currentNarrationStepRef.current === idx ? 'animate-pulse' : ''
+                              }`}>
                                 <svg width="20" height="20" viewBox="0 0 24 24" fill="white">
                                   <path d="M12 2a3 3 0 0 0-3 3v1a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/>
                                   <path d="M19 10a7 7 0 0 1-14 0"/>
@@ -1640,10 +2112,93 @@ const ImmersiveVisualizer = ({
                                 </svg>
                               </div>
                               <div className="flex-1">
-                                <span className="text-xs font-semibold text-teal-400 uppercase tracking-wider">AI Explanation</span>
-                                {renderExplanationWithDryRun(step.explanation)}
+                                <div className="flex items-center gap-2 mb-1">
+                                  <span className="text-xs font-semibold text-teal-400 uppercase tracking-wider">AI Explanation</span>
+                                  {isNarratingStep && currentNarrationStepRef.current === idx && (
+                                    <span className="flex items-center gap-1 text-xs text-purple-400">
+                                      <span className="w-1.5 h-1.5 bg-purple-500 rounded-full animate-pulse"></span>
+                                      Speaking...
+                                    </span>
+                                  )}
+                                </div>
+                                {/* Show animated text during narration, or full text after */}
+                                {isGuidedMode && stepExplanationText[idx] !== undefined ? (
+                                  <>
+                                    {/* Animated text explanation */}
+                                    <p className="mt-1 text-slate-200 leading-relaxed">
+                                      {stepExplanationText[idx] || (
+                                        <span className="text-slate-500 italic">Preparing explanation...</span>
+                                      )}
+                                      {isNarratingStep && currentNarrationStepRef.current === idx && (
+                                        <span className="inline-block w-0.5 h-4 bg-teal-400 ml-0.5 animate-pulse"></span>
+                                      )}
+                                    </p>
+                                    {/* Static dry-run box (always visible, not animated) */}
+                                    {renderDryRunBox(extractDryRunSection(step.explanation))}
+                                  </>
+                                ) : (
+                                  renderExplanationWithDryRun(step.explanation)
+                                )}
                               </div>
                             </div>
+                            
+                            {/* "Continue" prompt when waiting for user input */}
+                            {isGuidedMode && waitingForUserInput && narratedStepIndex === idx && (
+                              <div className="mt-4 pt-4 border-t border-slate-700/30">
+                                <div className="flex items-center justify-between">
+                                  <div 
+                                    className="flex items-center gap-2 text-sm text-slate-400 cursor-pointer hover:text-slate-300 transition-colors"
+                                    onClick={() => {
+                                      if (!isListening) {
+                                        startListening();
+                                      }
+                                    }}
+                                  >
+                                    {isListening ? (
+                                      <>
+                                        <span className="flex gap-1">
+                                          <span className="w-1.5 h-1.5 bg-red-500 rounded-full animate-bounce" style={{animationDelay: '0ms'}}></span>
+                                          <span className="w-1.5 h-1.5 bg-red-500 rounded-full animate-bounce" style={{animationDelay: '150ms'}}></span>
+                                          <span className="w-1.5 h-1.5 bg-red-500 rounded-full animate-bounce" style={{animationDelay: '300ms'}}></span>
+                                        </span>
+                                        <span className="text-red-400">Listening... Say "next" or ask a question</span>
+                                      </>
+                                    ) : (
+                                      <>
+                                        <svg className="w-4 h-4 text-purple-400" viewBox="0 0 24 24" fill="currentColor">
+                                          <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+                                          <path d="M19 10v2a7 7 0 0 1-14 0v-2" stroke="currentColor" strokeWidth="2" fill="none"/>
+                                        </svg>
+                                        <span>Click here or say "next" to continue, or ask a question</span>
+                                      </>
+                                    )}
+                                  </div>
+                                  <button
+                                    onClick={moveToNextStep}
+                                    className="flex items-center gap-2 px-4 py-2 rounded-lg bg-gradient-to-r from-teal-500 to-blue-500 text-white text-sm font-medium hover:from-teal-400 hover:to-blue-400 transition-all"
+                                  >
+                                    <span>Next Step</span>
+                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                      <polyline points="9 18 15 12 9 6"/>
+                                    </svg>
+                                  </button>
+                                </div>
+                              </div>
+                            )}
+                            
+                            {/* Inline Step Chat - Ask questions about this specific step */}
+                            <StepInlineChat
+                              stepIndex={idx}
+                              messages={getStepConversation(idx).messages}
+                              onSendMessage={(msg) => sendStepMessage(idx, msg)}
+                              isLoading={getStepConversation(idx).isLoading}
+                              isSpeaking={isStepChatSpeaking && speakingStepIndex === idx}
+                              isListening={stepChatListening === idx}
+                              onStartListening={() => startStepChatListening(idx)}
+                              onStopListening={stopStepChatListening}
+                              disabled={isNarratingStep || isTeacherThinking}
+                              currentExplanation={step.explanation}
+                            />
                           </div>
                         )}
 

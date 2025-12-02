@@ -403,6 +403,85 @@ The student is visualizing this code execution. Answer their questions about any
             self.conversation_history = self.conversation_history[:2] if len(self.conversation_history) >= 2 else []
         else:
             self.conversation_history = []
+    
+    def step_chat(
+        self,
+        user_message: str,
+        step_context: dict,
+        code: str = "",
+        code_lines: list = None
+    ) -> str:
+        """
+        Answer a question about a specific step in the execution.
+        This is for inline step-level conversations.
+        """
+        if not self.gemini_available:
+            return "AI Teacher is not available. Please check your API key."
+        
+        try:
+            step_index = step_context.get('stepIndex', 0)
+            current_line = step_context.get('currentLine', '')
+            current_code = step_context.get('currentCode', '')
+            explanation = step_context.get('explanation', '')
+            variables = step_context.get('variables', {})
+            previous_messages = step_context.get('previousMessages', [])
+            
+            # Build a focused prompt for this specific step
+            step_prompt = f"""You are an AI coding tutor. The user is viewing a specific step in code execution and has a question.
+
+CURRENT STEP CONTEXT:
+- Step {step_index + 1}, Line {current_line}
+- Code: {current_code}
+- Original Explanation: {explanation}
+- Current Variables: {json.dumps(variables, default=str) if variables else 'None'}
+
+FULL CODE:
+```python
+{code}
+```
+
+PREVIOUS CONVERSATION ABOUT THIS STEP:
+{self._format_previous_messages(previous_messages)}
+
+USER'S QUESTION: {user_message}
+
+Instructions:
+- Answer specifically about THIS step and line of code
+- Be concise (2-3 sentences max for simple questions)
+- Reference the variable values shown above when relevant
+- Use natural conversational language (this will be spoken aloud)
+- If the question is about something not related to this step, briefly explain and connect it back to the current context
+"""
+            
+            # Use a fresh chat for step-specific questions (don't pollute main conversation)
+            chat = self.gemini_model.start_chat(history=[])
+            
+            response = chat.send_message(
+                step_prompt,
+                generation_config=genai.GenerationConfig(
+                    temperature=0.7,
+                    max_output_tokens=250,
+                )
+            )
+            
+            return response.text
+            
+        except Exception as e:
+            print(f"Step chat error: {e}")
+            return f"I encountered an error while answering your question. Please try again."
+    
+    def _format_previous_messages(self, messages: list) -> str:
+        """Format previous messages for context."""
+        if not messages:
+            return "No previous messages"
+        
+        formatted = []
+        for msg in messages[-4:]:  # Only keep last 4 messages for context
+            role = "User" if msg.get('from') == 'user' else "AI"
+            text = msg.get('text', '')[:200]  # Truncate long messages
+            formatted.append(f"{role}: {text}")
+        
+        return "\n".join(formatted)
 
 
 # Singleton instance

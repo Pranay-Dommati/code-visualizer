@@ -246,6 +246,50 @@ def teacher_clear():
         return jsonify({"success": False, "error": str(e)}), 500
 
 
+@app.route('/api/teacher/step-chat', methods=['POST'])
+def teacher_step_chat():
+    """
+    Chat about a specific step in the code execution.
+    This is for inline step-level conversations.
+    
+    Request body:
+    {
+        "message": "user's question",
+        "stepContext": {
+            "stepIndex": 0,
+            "currentLine": 3,
+            "currentCode": "max_val = nums[0]",
+            "explanation": "We're starting by assuming...",
+            "variables": {...},
+            "previousMessages": [...]
+        },
+        "code": "full code",
+        "codeLines": ["line1", "line2", ...]
+    }
+    """
+    try:
+        data = request.get_json()
+        
+        if not data or 'message' not in data:
+            return jsonify({"success": False, "error": "No message provided"}), 400
+        
+        message = data['message']
+        step_context = data.get('stepContext', {})
+        code = data.get('code', '')
+        code_lines = data.get('codeLines', [])
+        
+        # Build a focused prompt for this specific step
+        response = teacher.step_chat(message, step_context, code, code_lines)
+        
+        return jsonify({
+            "success": True,
+            "response": response
+        })
+        
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
 # ==================== End AI Teacher Endpoints ====================
 
 
