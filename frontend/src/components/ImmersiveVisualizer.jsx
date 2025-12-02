@@ -92,23 +92,71 @@ const ImmersiveVisualizer = ({
     setIsPlaying(true);
   };
 
-  // Get syntax highlighted code line
-  const highlightSyntax = (code) => {
-    if (!code) return code;
+  // Get syntax highlighted code line - returns React elements
+  const highlightSyntax = (codeLine) => {
+    if (!codeLine) return <span>&nbsp;</span>;
     
-    const keywords = ['def', 'class', 'if', 'else', 'elif', 'for', 'while', 'return', 'import', 'from', 'as', 'try', 'except', 'finally', 'with', 'lambda', 'yield', 'break', 'continue', 'pass', 'raise', 'in', 'not', 'and', 'or', 'is', 'None', 'True', 'False', 'self', 'print', 'range', 'len', 'int', 'str', 'list', 'dict', 'set', 'tuple'];
+    const keywords = ['def', 'class', 'if', 'else', 'elif', 'for', 'while', 'return', 'import', 'from', 'as', 'try', 'except', 'finally', 'with', 'lambda', 'yield', 'break', 'continue', 'pass', 'raise', 'in', 'not', 'and', 'or', 'is', 'None', 'True', 'False', 'self'];
+    const builtins = ['print', 'range', 'len', 'int', 'str', 'list', 'dict', 'set', 'tuple', 'float', 'bool', 'type', 'input', 'open', 'map', 'filter', 'sorted', 'enumerate', 'zip', 'sum', 'max', 'min', 'abs'];
     
-    let highlighted = code
-      .replace(/(["'])(?:(?=(\\?))\2.)*?\1/g, '<span class="text-green-400">$&</span>')
-      .replace(/#.*/g, '<span class="text-slate-500">$&</span>')
-      .replace(/\b(\d+\.?\d*)\b/g, '<span class="text-orange-400">$1</span>');
+    const result = [];
+    let remaining = codeLine;
+    let key = 0;
     
-    keywords.forEach(kw => {
-      const regex = new RegExp(`\\b(${kw})\\b`, 'g');
-      highlighted = highlighted.replace(regex, '<span class="text-pink-400 font-semibold">$1</span>');
-    });
+    while (remaining.length > 0) {
+      // Check for string (single or double quotes)
+      const stringMatch = remaining.match(/^(["'])(?:(?!\1)[^\\]|\\.)*?\1/);
+      if (stringMatch) {
+        result.push(<span key={key++} className="text-green-400">{stringMatch[0]}</span>);
+        remaining = remaining.slice(stringMatch[0].length);
+        continue;
+      }
+      
+      // Check for comment
+      if (remaining.startsWith('#')) {
+        result.push(<span key={key++} className="text-slate-500 italic">{remaining}</span>);
+        break;
+      }
+      
+      // Check for number
+      const numMatch = remaining.match(/^\d+(\.\d+)?/);
+      if (numMatch) {
+        result.push(<span key={key++} className="text-orange-400">{numMatch[0]}</span>);
+        remaining = remaining.slice(numMatch[0].length);
+        continue;
+      }
+      
+      // Check for word (keyword, builtin, or identifier)
+      const wordMatch = remaining.match(/^[a-zA-Z_][a-zA-Z0-9_]*/);
+      if (wordMatch) {
+        const word = wordMatch[0];
+        let className = 'text-slate-200';
+        
+        if (keywords.includes(word)) {
+          className = 'text-pink-400 font-semibold';
+        } else if (builtins.includes(word)) {
+          className = 'text-blue-400';
+        }
+        
+        result.push(<span key={key++} className={className}>{word}</span>);
+        remaining = remaining.slice(word.length);
+        continue;
+      }
+      
+      // Check for operators and punctuation
+      const opMatch = remaining.match(/^[+\-*/%=<>!&|^~@:,.\[\](){}]+/);
+      if (opMatch) {
+        result.push(<span key={key++} className="text-cyan-400">{opMatch[0]}</span>);
+        remaining = remaining.slice(opMatch[0].length);
+        continue;
+      }
+      
+      // Default: take one character (whitespace or unknown)
+      result.push(<span key={key++}>{remaining[0]}</span>);
+      remaining = remaining.slice(1);
+    }
     
-    return highlighted;
+    return result;
   };
 
   if (!isOpen) return null;
@@ -244,15 +292,16 @@ const ImmersiveVisualizer = ({
                     {lineNum}
                   </span>
                   <span
-                    className={`flex-1 ${
+                    className={`flex-1 whitespace-pre ${
                       isCurrentLine
                         ? 'text-white'
                         : wasExecuted
                         ? 'text-slate-300'
                         : 'text-slate-500'
                     }`}
-                    dangerouslySetInnerHTML={{ __html: highlightSyntax(line) || '&nbsp;' }}
-                  />
+                  >
+                    {highlightSyntax(line)}
+                  </span>
                 </div>
               );
             })}
@@ -357,10 +406,9 @@ const ImmersiveVisualizer = ({
                         {/* Code Being Executed */}
                         <div className="px-5 py-4 border-b border-slate-700/50">
                           <div className="bg-slate-900/80 rounded-xl p-4 font-mono text-sm">
-                            <code
-                              className="text-teal-300"
-                              dangerouslySetInnerHTML={{ __html: highlightSyntax(step.code) }}
-                            />
+                            <code className="text-teal-300 whitespace-pre">
+                              {highlightSyntax(step.code)}
+                            </code>
                           </div>
                         </div>
 
