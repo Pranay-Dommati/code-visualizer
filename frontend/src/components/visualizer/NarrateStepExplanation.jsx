@@ -49,6 +49,12 @@ export function createNarrateStepExplanation({
       const sentence = sentences[i].trim();
       if (!sentence) continue;
 
+      // Check if we've moved to a different step
+      if (currentNarrationStepRef.current !== stepIndex) {
+        console.log(`Stopping narration for step ${stepIndex} as we moved to ${currentNarrationStepRef.current}`);
+        return;
+      }
+
       try {
         const response = await fetch(`${API_BASE_URL}/teacher/speak`, {
           method: "POST",
@@ -70,6 +76,11 @@ export function createNarrateStepExplanation({
         }
 
         const data = await response.json();
+
+        // Check again before playing audio
+        if (currentNarrationStepRef.current !== stepIndex) {
+           return;
+        }
 
         if (data.success && data.audio) {
           const audio = new Audio(`data:audio/mpeg;base64,${data.audio}`);
