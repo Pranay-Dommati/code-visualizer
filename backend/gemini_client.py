@@ -3,7 +3,8 @@ Gemini 2.0 Flash LIVE Client
 =============================
 Async WebSocket client for Gemini Realtime API using service account OAuth.
 
-Connects to: wss://us-central1-aiplatform.googleapis.com/v1beta1/projects/{PROJECT}/locations/us-central1/publishers/google/models/gemini-2.0-flash-live:streamGenerateContent
+Connects to:
+wss://us-central1-aiplatform.googleapis.com/v1beta1/projects/{PROJECT}/locations/us-central1/publishers/google/models/gemini-2.0-flash-live:streamGenerateContent
 """
 
 import os
@@ -15,7 +16,10 @@ from google.oauth2 import service_account
 from google.auth.transport.requests import Request
 
 class GeminiLiveClient:
-    def __init__(self, service_account_file="code-visualizer-keys.json"):
+    def __init__(self, service_account_file=None):
+        if service_account_file is None:
+            service_account_file = os.path.join(os.path.dirname(__file__), "code-visualizer-keys.json")
+            
         self.service_account_file = service_account_file
         self.credentials = None
         self.project_id = None
@@ -23,9 +27,13 @@ class GeminiLiveClient:
         self.is_connected = False
         
         # Load project ID from service account
-        with open(service_account_file, "r") as f:
-            data = json.load(f)
-            self.project_id = data.get("project_id")
+        try:
+            with open(service_account_file, "r") as f:
+                data = json.load(f)
+                self.project_id = data.get("project_id")
+        except FileNotFoundError:
+            print(f"Error: Service account file not found at {service_account_file}")
+            self.project_id = None
         
     def _get_auth_token(self):
         """Generate OAuth2 Bearer token from service account."""
@@ -36,7 +44,6 @@ class GeminiLiveClient:
             scopes=scopes
         )
         
-        # Refresh if expired
         if not self.credentials.valid:
             self.credentials.refresh(Request())
             
@@ -46,45 +53,43 @@ class GeminiLiveClient:
         """Connect to Gemini 2.0 Flash LIVE WebSocket."""
         token = self._get_auth_token()
         
-        # Gemini Live WebSocket URL
+        # Correct Gemini Live WebSocket URL
         host = "us-central1-aiplatform.googleapis.com"
-        uri = f"wss://{host}/v1beta1/projects/{self.project_id}/locations/us-central1/publishers/google/models/gemini-2.0-flash-exp:streamGenerateContent"
+        uri = (
+            f"wss://{host}/v1beta1/projects/{self.project_id}/locations/us-central1/"
+            f"publishers/google/models/gemini-2.0-flash-live:streamGenerateContent"
+        )
         
+        print("Connecting to URI:", uri)
+
         headers = {
             "Authorization": f"Bearer {token}",
             "Content-Type": "application/json"
         }
         
         try:
-            # Try with extra_headers (standard for newer websockets)
             print(f"Connecting to Gemini Live with websockets version: {websockets.__version__}")
-            try:
-                self.ws = await websockets.connect(uri, extra_headers=headers)
-            except TypeError as e:
-                if "unexpected keyword argument 'extra_headers'" in str(e):
-                    print("⚠ Older websockets detected, trying 'additional_headers'...")
-                    # Fallback for older versions or specific loop issues
-                    self.ws = await websockets.connect(uri, additional_headers=headers)
-                else:
-                    raise e
+            
+            # websockets 14.x supports extra_headers natively
+            self.ws = await websockets.connect(uri, extra_headers=headers)
                     
             self.is_connected = True
-            print(f"✓ Connected to Gemini 2.0 Flash LIVE")
+            print("✓ Connected to Gemini 2.0 Flash LIVE")
             
             # Send initial setup message
             await self._send_setup()
-            
             return True
+
         except Exception as e:
             print(f"✗ Failed to connect to Gemini Live: {e}")
             self.is_connected = False
             return False
     
     async def _send_setup(self):
-        """Send initial session configuration."""
+        """Send initial session configuration for Gemini Live."""
         setup_msg = {
             "setup": {
-                "model": "models/gemini-2.0-flash-exp",
+                "model": "models/gemini-2.0-flash-live",
                 "generation_config": {
                     "response_modalities": ["AUDIO", "TEXT"],
                     "speech_config": {
@@ -99,18 +104,13 @@ class GeminiLiveClient:
                     "parts": [{
                         "text": """You are an AI Teacher that explains Data Structures and Algorithms visually.
 
-When explaining concepts:
-1. Speak naturally and clearly
-2. Send JSON drawing commands to visualize on a canvas
-3. Step through algorithms visually
-
-Drawing commands (send as JSON on separate lines):
+Explain concepts step-by-step and send JSON drawing commands such as:
 {"action": "draw_node", "id": "n1", "x": 100, "y": 200, "value": "5"}
 {"action": "connect_nodes", "from": "n1", "to": "n2"}
 {"action": "update_node", "id": "n1", "highlight": true}
 {"action": "clear_canvas"}
 
-Always visualize your explanations step by step."""
+Always speak clearly while drawing."""
                     }]
                 }
             }
@@ -151,10 +151,10 @@ Always visualize your explanations step by step."""
         }
         
         await self.ws.send(json.dumps(msg))
-        print(f"→ Sent text: {text}")
+        print("→ Sent text:", text)
     
     async def receive(self):
-        """Receive message from Gemini Live."""
+        """Receive messages from Gemini Live."""
         if not self.ws or not self.is_connected:
             return None
             
@@ -163,9 +163,10 @@ Always visualize your explanations step by step."""
             return json.loads(response)
         except websockets.exceptions.ConnectionClosed:
             self.is_connected = False
+            print("⚠ Gemini WebSocket closed")
             return None
         except Exception as e:
-            print(f"Receive error: {e}")
+            print("Receive error:", e)
             return None
     
     async def close(self):

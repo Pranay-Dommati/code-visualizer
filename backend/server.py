@@ -19,7 +19,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from gemini_client import GeminiLiveClient
+# Import LiveKit token router
+from livekit_token import router as livekit_router
 
 # Import existing modules (tracer, sandbox, etc.)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -50,7 +51,7 @@ class DetectRequest(BaseModel):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     print("=" * 50)
-    print("Code Visualizer API (FastAPI)")
+    print("Code Visualizer API (FastAPI + LiveKit)")
     print("=" * 50)
     print("\nEndpoints:")
     print("  GET  /api/health")
@@ -58,7 +59,7 @@ async def lifespan(app: FastAPI):
     print("  POST /api/detect-inputs")
     print("  POST /api/trace")
     print("  POST /api/trace-stream")
-    print("  WS   /ws/teacher")
+    print("  GET  /livekit-token")
     print("=" * 50)
     yield
     print("Server shutting down...")
@@ -74,6 +75,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Include LiveKit Router
+app.include_router(livekit_router)
+
 # ============ REST Endpoints ============
 
 @app.get("/api/health")
@@ -81,8 +85,8 @@ async def health_check():
     return {
         "status": "healthy",
         "service": "Code Visualizer API (FastAPI)",
-        "version": "2.0.0",
-        "gemini_live": True,
+        "version": "2.1.0",
+        "livekit_enabled": True,
         "ai_narrator": bool(narrator)
     }
 
@@ -353,67 +357,36 @@ async def validate_code_endpoint(request: DetectRequest):
     except Exception as e:
         return {"valid": False, "error": str(e)}
 
-# ============ WebSocket for Realtime AI Teacher ===========
+# ============ AI Teacher REST Endpoints (Restored) ============
 
-@app.websocket("/ws/teacher")
-async def websocket_teacher(websocket: WebSocket):
-    await websocket.accept()
-    print("✓ Client connected to /ws/teacher")
-    gemini = GeminiLiveClient()
-    try:
-        connected = await gemini.connect()
-        if not connected:
-            await websocket.send_json({"error": "Failed to connect to Gemini Live"})
-            await websocket.close()
-            return
-        async def receive_from_gemini():
-            while gemini.is_connected:
-                try:
-                    response = await gemini.receive()
-                    if response:
-                        await websocket.send_json(response)
-                        if "serverContent" in response:
-                            content = response.get("serverContent", {})
-                            parts = content.get("modelTurn", {}).get("parts", [])
-                            for part in parts:
-                                if "text" in part:
-                                    text = part["text"]
-                                    for line in text.split('\n'):
-                                        line = line.strip()
-                                        if line.startswith('{') and 'action' in line:
-                                            try:
-                                                cmd = json.loads(line)
-                                                await websocket.send_json(cmd)
-                                            except:
-                                                pass
-                except Exception as e:
-                    print(f"Gemini receive error: {e}")
-                    break
-        async def receive_from_frontend():
-            while True:
-                try:
-                    data = await websocket.receive_json()
-                    if "text" in data:
-                        await gemini.send_text(data["text"])
-                    if "audio" in data:
-                        audio_bytes = base64.b64decode(data["audio"])
-                        await gemini.send_audio(audio_bytes)
-                except WebSocketDisconnect:
-                    print("Client disconnected")
-                    break
-                except Exception as e:
-                    print(f"Frontend receive error: {e}")
-                    break
-        gemini_task = asyncio.create_task(receive_from_gemini())
-        frontend_task = asyncio.create_task(receive_from_frontend())
-        done, pending = await asyncio.wait([gemini_task, frontend_task], return_when=asyncio.FIRST_COMPLETED)
-        for task in pending:
-            task.cancel()
-    except Exception as e:
-        print(f"WebSocket error: {e}")
-    finally:
-        await gemini.close()
-        print("✓ Client disconnected from /ws/teacher")
+class ContextRequest(BaseModel):
+    code: str
+    codeLines: List[str] = []
+    steps: List[dict] = []
+
+class ChatRequest(BaseModel):
+    message: str
+    currentStepIndex: Optional[int] = None
+
+@app.post("/api/teacher/context")
+async def teacher_set_context(request: ContextRequest):
+    """Set the code execution context for AI Teacher."""
+    # In the WebSocket version, context is usually sent via WS, 
+    # but we keep this for compatibility if the frontend calls it.
+    print(f"✓ Context received: {len(request.steps)} steps")
+    return {"success": True, "message": "Context set successfully"}
+
+@app.post("/api/teacher/chat")
+async def teacher_chat(request: ChatRequest):
+    """Legacy chat endpoint (forwarding to WS is preferred)."""
+    # This is a placeholder to prevent 404s if the frontend uses REST for chat.
+    # Ideally, the frontend should use the WebSocket for all teacher interactions.
+    return {"success": True, "response": "Please use the real-time voice interface."}
+
+@app.post("/api/teacher/speak")
+async def teacher_speak(request: dict):
+    """Legacy TTS endpoint."""
+    return {"success": False, "error": "Use real-time WebSocket for audio."}
 
 # ============ Run Server ============
 

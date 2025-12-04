@@ -1,128 +1,129 @@
-import React, { useEffect, useState, useCallback, useRef } from 'react';
-import { Stage, Layer, Circle, Text, Arrow, Group, Rect } from 'react-konva';
+import React, { useState, useEffect } from 'react';
+import { Stage, Layer, Circle, Line, Text, Group } from 'react-konva';
+import LiveKitConnection from '../services/LiveKitConnection';
 import { canvasStateManager } from '../services/CanvasStateManager';
-import { teacherConnection } from '../services/TeacherConnection';
+import { commandProcessor } from '../services/CommandProcessor';
 
-const VisualExplanationPanel = ({ width = 400, height = 600 }) => {
+const VisualExplanationPanel = () => {
+    const [isConnected, setIsConnected] = useState(false);
+    const [isSpeaking, setIsSpeaking] = useState(false);
+    const [status, setStatus] = useState('Disconnected');
     const [nodes, setNodes] = useState([]);
     const [edges, setEdges] = useState([]);
-    const [isConnected, setIsConnected] = useState(false);
-    const [isMicActive, setIsMicActive] = useState(false);
     const [textInput, setTextInput] = useState('');
 
+    // Subscribe to canvas state changes
     useEffect(() => {
-        // Subscribe to canvas state changes
         const unsubscribe = canvasStateManager.subscribe((state) => {
             setNodes(state.nodes);
             setEdges(state.edges);
         });
-        return unsubscribe;
+        return () => unsubscribe();
     }, []);
 
-    useEffect(() => {
-        // Subscribe to connection status
-        const unsubscribe = teacherConnection.subscribe((status) => {
-            if (status === 'connected') setIsConnected(true);
-            if (status === 'disconnected') {
-                setIsConnected(false);
-                setIsMicActive(false);
+    const handleConnect = async () => {
+        try {
+            setStatus('Connecting...');
+
+            // Get token from backend
+            const response = await fetch('http://localhost:5000/livekit-token?identity=student');
+            const data = await response.json();
+
+            if (!data.token) {
+                throw new Error('Failed to get token');
             }
-        });
-        return unsubscribe;
-    }, []);
 
-    // Cleanup on unmount
-    useEffect(() => {
-        return () => {
-            teacherConnection.stop();
-        };
-    }, []);
+            await LiveKitConnection.connect(
+                data.token,
+                data.url,
+                (command) => {
+                    // Handle drawing commands
+                    commandProcessor.process(command);
+                },
+                (state) => {
+                    // Handle connection state
+                    setStatus(`Status: ${state}`);
+                    setIsConnected(state === 'connected');
+                }
+            );
 
-    const toggleConnection = useCallback(async () => {
-        if (isConnected) {
-            teacherConnection.stop();
+            setStatus('Connected (Ready to Speak)');
+        } catch (error) {
+            console.error('Connection failed:', error);
+            setStatus(`Error: ${error.message}`);
+        }
+    };
+
+    const toggleMicrophone = async () => {
+        if (!isConnected) return;
+
+        if (isSpeaking) {
+            await LiveKitConnection.stopMicrophone();
+            setIsSpeaking(false);
         } else {
-            await teacherConnection.connect();
+            await LiveKitConnection.startMicrophone();
+            setIsSpeaking(true);
         }
-    }, [isConnected]);
+    };
 
-    const handleSendText = useCallback(() => {
-        if (textInput.trim()) {
-            teacherConnection.sendText(textInput);
-            setTextInput('');
-        }
-    }, [textInput]);
+    const handleSendText = async () => {
+        if (!textInput.trim() || !isConnected) return;
+        await LiveKitConnection.sendText(textInput);
+        setTextInput('');
+    };
 
     return (
-        <div className="w-full h-full bg-slate-900 flex flex-col overflow-hidden">
-            {/* Header with Controls */}
-            <div className="flex-shrink-0 p-4 border-b border-slate-800 bg-slate-900/80">
-                <div className="flex items-center justify-between mb-3">
-                    <div className="flex items-center gap-2">
-                        <div className="w-8 h-8 rounded-full bg-gradient-to-br from-teal-500 to-blue-500 flex items-center justify-center">
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2">
-                                <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
-                                <circle cx="8.5" cy="8.5" r="1.5" />
-                                <polyline points="21 15 16 10 5 21" />
-                            </svg>
-                        </div>
-                        <div>
-                            <h3 className="text-sm font-semibold text-white">Visual Explanation</h3>
-                            <div className="flex items-center gap-1.5">
-                                <div className={`w-1.5 h-1.5 rounded-full ${isConnected ? 'bg-green-400 animate-pulse' : 'bg-slate-500'}`} />
-                                <span className="text-[10px] font-medium text-slate-400">{isConnected ? 'Live' : 'Offline'}</span>
-                            </div>
-                        </div>
-                    </div>
-
+        <div className="flex flex-col h-full bg-gray-900 text-white p-4 rounded-lg shadow-xl">
+            <div className="flex justify-between items-center mb-4">
+                <h2 className="text-xl font-bold bg-gradient-to-r from-blue-400 to-purple-500 bg-clip-text text-transparent">
+                    AI Teacher (LiveKit)
+                </h2>
+                <div className="flex gap-2">
                     <button
-                        onClick={toggleConnection}
-                        className={`px-4 py-2 rounded-xl text-xs font-medium transition-all flex items-center gap-2 ${isConnected
-                                ? 'bg-red-500/10 text-red-400 hover:bg-red-500/20 border border-red-500/30'
-                                : 'bg-gradient-to-r from-teal-600 to-blue-600 text-white hover:shadow-lg hover:shadow-teal-500/25'
+                        onClick={handleConnect}
+                        disabled={isConnected}
+                        className={`px-4 py-2 rounded-lg font-semibold transition-all ${isConnected
+                                ? 'bg-green-600 cursor-default'
+                                : 'bg-blue-600 hover:bg-blue-700 active:scale-95'
                             }`}
                     >
-                        {isConnected ? (
-                            <>
-                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                    <rect x="4" y="4" width="16" height="16" rx="2" />
-                                </svg>
-                                End Session
-                            </>
-                        ) : (
-                            <>
-                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                    <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
-                                    <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
-                                    <line x1="12" y1="19" x2="12" y2="23" />
-                                    <line x1="8" y1="23" x2="16" y2="23" />
-                                </svg>
-                                Start Live
-                            </>
-                        )}
+                        {isConnected ? 'Connected' : 'Connect'}
+                    </button>
+
+                    <button
+                        onClick={toggleMicrophone}
+                        disabled={!isConnected}
+                        className={`px-4 py-2 rounded-lg font-semibold transition-all ${!isConnected
+                                ? 'bg-gray-700 cursor-not-allowed opacity-50'
+                                : isSpeaking
+                                    ? 'bg-red-500 hover:bg-red-600 animate-pulse'
+                                    : 'bg-gray-700 hover:bg-gray-600'
+                            }`}
+                    >
+                        {isSpeaking ? 'Mute Mic' : 'Unmute Mic'}
                     </button>
                 </div>
             </div>
 
-            {/* Canvas Area */}
-            <div className="flex-1 relative overflow-hidden">
-                <Stage width={width} height={height - 180}>
+            <div className="mb-2 text-sm text-gray-400 font-mono">
+                {status}
+            </div>
+
+            {/* Visualization Canvas */}
+            <div className="flex-grow bg-gray-800 rounded-lg overflow-hidden border border-gray-700 relative">
+                <Stage width={800} height={500}>
                     <Layer>
                         {/* Edges */}
                         {edges.map((edge, i) => {
                             const fromNode = nodes.find(n => n.id === edge.from);
                             const toNode = nodes.find(n => n.id === edge.to);
                             if (!fromNode || !toNode) return null;
-
                             return (
-                                <Arrow
-                                    key={edge.id || i}
+                                <Line
+                                    key={i}
                                     points={[fromNode.x, fromNode.y, toNode.x, toNode.y]}
-                                    stroke="#4fd1c5"
+                                    stroke="#4B5563"
                                     strokeWidth={2}
-                                    fill="#4fd1c5"
-                                    pointerLength={10}
-                                    pointerWidth={10}
                                 />
                             );
                         })}
@@ -132,82 +133,55 @@ const VisualExplanationPanel = ({ width = 400, height = 600 }) => {
                             <Group key={node.id} x={node.x} y={node.y} draggable>
                                 <Circle
                                     radius={30}
-                                    fill="#1e293b"
-                                    stroke="#38bdf8"
+                                    fill={node.highlight ? '#8B5CF6' : '#1F2937'}
+                                    stroke={node.highlight ? '#C4B5FD' : '#4B5563'}
                                     strokeWidth={2}
                                     shadowColor="black"
                                     shadowBlur={10}
-                                    shadowOpacity={0.5}
+                                    shadowOpacity={0.3}
                                 />
                                 <Text
-                                    text={node.value.toString()}
+                                    text={node.value}
                                     fontSize={16}
-                                    fill="#f8fafc"
+                                    fill="white"
                                     align="center"
                                     verticalAlign="middle"
                                     offsetX={10}
                                     offsetY={8}
+                                    fontFamily="monospace"
+                                    fontStyle="bold"
                                 />
                             </Group>
                         ))}
                     </Layer>
                 </Stage>
 
-                {/* Empty State */}
-                {nodes.length === 0 && !isConnected && (
-                    <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-                        <div className="w-16 h-16 rounded-2xl bg-teal-500/10 flex items-center justify-center mb-4">
-                            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-teal-400">
-                                <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
-                                <circle cx="8.5" cy="8.5" r="1.5" />
-                                <polyline points="21 15 16 10 5 21" />
-                            </svg>
-                        </div>
-                        <p className="text-slate-400 text-sm mb-1">Start a live session to visualize</p>
-                        <p className="text-slate-500 text-xs">The AI will draw diagrams as it explains</p>
-                    </div>
-                )}
-
-                {/* Connected but waiting */}
-                {nodes.length === 0 && isConnected && (
-                    <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-                        <div className="w-16 h-16 rounded-full bg-teal-500/10 flex items-center justify-center mb-4 animate-pulse">
-                            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-teal-400">
-                                <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
-                                <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
-                            </svg>
-                        </div>
-                        <p className="text-teal-400 text-sm mb-1">Listening...</p>
-                        <p className="text-slate-500 text-xs">Speak or type to ask the AI Teacher</p>
+                {nodes.length === 0 && (
+                    <div className="absolute inset-0 flex items-center justify-center text-gray-500 pointer-events-none">
+                        <p>AI visualizations will appear here...</p>
                     </div>
                 )}
             </div>
 
-            {/* Input Area */}
-            {isConnected && (
-                <div className="flex-shrink-0 p-4 border-t border-slate-800 bg-slate-900/80">
-                    <div className="flex gap-2">
-                        <input
-                            type="text"
-                            value={textInput}
-                            onChange={(e) => setTextInput(e.target.value)}
-                            onKeyDown={(e) => e.key === 'Enter' && handleSendText()}
-                            placeholder="Type a request (e.g., 'Draw a linked list')"
-                            className="flex-1 bg-slate-800 border border-slate-700 rounded-xl px-4 py-2.5 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-teal-500 focus:ring-1 focus:ring-teal-500 transition-all"
-                        />
-                        <button
-                            onClick={handleSendText}
-                            disabled={!textInput.trim()}
-                            className="p-2.5 bg-teal-600 hover:bg-teal-500 text-white rounded-xl transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                        >
-                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                <line x1="22" y1="2" x2="11" y2="13" />
-                                <polygon points="22 2 15 22 11 13 2 9 22 2" />
-                            </svg>
-                        </button>
-                    </div>
-                </div>
-            )}
+            {/* Text Chat Input */}
+            <div className="mt-4 flex gap-2">
+                <input
+                    type="text"
+                    value={textInput}
+                    onChange={(e) => setTextInput(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && handleSendText()}
+                    placeholder="Type a message to the AI teacher..."
+                    className="flex-grow bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 focus:outline-none focus:border-blue-500 transition-colors"
+                    disabled={!isConnected}
+                />
+                <button
+                    onClick={handleSendText}
+                    disabled={!isConnected}
+                    className="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-700 disabled:cursor-not-allowed px-4 py-2 rounded-lg transition-colors"
+                >
+                    Send
+                </button>
+            </div>
         </div>
     );
 };
