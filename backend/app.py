@@ -49,8 +49,7 @@ def health_check():
         "service": "Python Code Visualizer API",
         "version": "1.0.0",
         "ai_narrator": narrator.is_available,
-        "ai_teacher": teacher.gemini_available,
-        "tts_available": teacher.elevenlabs_available
+        "ai_teacher": teacher.gemini_available
     })
 
 
@@ -162,78 +161,6 @@ def teacher_chat_sync():
         return jsonify({"success": False, "error": str(e)}), 500
 
 
-@app.route('/api/teacher/speak', methods=['POST'])
-def teacher_speak():
-    """
-    Convert text to speech using ElevenLabs.
-    
-    Request body:
-    {
-        "text": "text to speak",
-        "format": "base64" or "binary",
-        "with_timestamps": true/false (optional)
-    }
-    
-    Returns: audio/mpeg data or base64 encoded audio
-    If with_timestamps=true, also returns character-level alignment data
-    """
-    try:
-        data = request.get_json()
-        
-        if not data or 'text' not in data:
-            return jsonify({"success": False, "error": "No text provided"}), 400
-        
-        text = data['text']
-        return_format = data.get('format', 'base64')  # 'base64' or 'binary'
-        with_timestamps = data.get('with_timestamps', False)
-        
-        if not teacher.elevenlabs_available:
-            return jsonify({"success": False, "error": "TTS not available"}), 503
-        
-        # Use timestamps endpoint if requested
-        if with_timestamps:
-            result = teacher.text_to_speech_with_timestamps(text)
-            if result:
-                return jsonify({
-                    "success": True,
-                    "audio": result["audio"],
-                    "alignment": result["alignment"],
-                    "format": "mp3"
-                })
-            else:
-                # Fallback to regular TTS without timestamps
-                audio_data = teacher.text_to_speech(text)
-                if audio_data:
-                    audio_base64 = base64.b64encode(audio_data).decode('utf-8')
-                    return jsonify({
-                        "success": True,
-                        "audio": audio_base64,
-                        "format": "mp3"
-                    })
-                return jsonify({"success": False, "error": "TTS generation failed"}), 500
-        
-        audio_data = teacher.text_to_speech(text)
-        
-        if audio_data:
-            if return_format == 'binary':
-                return Response(
-                    audio_data,
-                    mimetype='audio/mpeg',
-                    headers={'Content-Disposition': 'inline'}
-                )
-            else:
-                # Return as base64
-                audio_base64 = base64.b64encode(audio_data).decode('utf-8')
-                return jsonify({
-                    "success": True,
-                    "audio": audio_base64,
-                    "format": "mp3"
-                })
-        else:
-            return jsonify({"success": False, "error": "TTS generation failed"}), 500
-        
-    except Exception as e:
-        return jsonify({"success": False, "error": str(e)}), 500
 
 
 @app.route('/api/teacher/clear', methods=['POST'])

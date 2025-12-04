@@ -20,12 +20,7 @@ const ImmersiveVisualizer = ({
     const [chatMessages, setChatMessages] = useState([]);
     const [chatInput, setChatInput] = useState('');
     const [isTeacherThinking, setIsTeacherThinking] = useState(false);
-    const [isTeacherSpeaking, setIsTeacherSpeaking] = useState(false);
-    const [voiceEnabled, setVoiceEnabled] = useState(true);
     const [teacherContextSet, setTeacherContextSet] = useState(false);
-    const [isListening, setIsListening] = useState(false);
-    const [isVoiceMode, setIsVoiceMode] = useState(false); // Track if current message is voice mode
-    const [isConversationMode, setIsConversationMode] = useState(false); // Continuous voice loop
 
     // Resizable sidebar state
     const [sidebarWidth, setSidebarWidth] = useState(400);
@@ -35,13 +30,6 @@ const ImmersiveVisualizer = ({
     const latestStepRef = useRef(null);
     const prevStepsLengthRef = useRef(0);
     const chatScrollRef = useRef(null);
-    const audioRef = useRef(null);
-    const recognitionRef = useRef(null);
-    const audioQueueRef = useRef([]);
-    const isPlayingQueueRef = useRef(false);
-    const pendingTextRef = useRef('');
-    const displayedTextRef = useRef(''); // For voice mode - text shown so far
-    const shouldAutoListenRef = useRef(false); // Track if we should auto-listen after speaking
 
     // Reset when opened
     useEffect(() => {
@@ -163,318 +151,38 @@ const ImmersiveVisualizer = ({
         }
     }, [chatMessages]);
 
-    // Animate text using precise character timestamps from ElevenLabs
-    const animateTextWithTimestamps = useCallback((textToAnimate, alignment, audio, onComplete) => {
-        const baseDisplayed = displayedTextRef.current;
-        const prefix = baseDisplayed ? ' ' : '';
 
-        // Get character timing arrays
-        const charStartTimes = alignment?.character_start_times_seconds || [];
-        const characters = alignment?.characters || [];
 
-        if (charStartTimes.length === 0 || characters.length === 0) {
-            // Fallback to simple animation if no alignment data
-            return null;
+
+    // Resizing logic
+    const startResizing = useCallback((e) => {
+        setIsResizing(true);
+        e.preventDefault(); // Prevent text selection
+    }, []);
+
+    const stopResizing = useCallback(() => {
+        setIsResizing(false);
+    }, []);
+
+    const resize = useCallback((e) => {
+        if (isResizing) {
+            // Calculate width from the right edge
+            const newWidth = window.innerWidth - e.clientX;
+            // Min width 300px, Max width 800px (or percentage of screen)
+            if (newWidth > 300 && newWidth < window.innerWidth * 0.6) {
+                setSidebarWidth(newWidth);
+            }
         }
+    }, [isResizing]);
 
-        let animationFrame = null;
-        let lastCharIndex = 0;
-
-        const updateText = () => {
-            if (!audio || audio.paused || audio.ended) {
-                // Audio stopped - show remaining text
-                displayedTextRef.current = baseDisplayed + prefix + textToAnimate;
-                setChatMessages(prev => {
-                    const newMessages = [...prev];
-                    if (newMessages.length > 0 && newMessages[newMessages.length - 1].role === 'assistant') {
-                        newMessages[newMessages.length - 1] = {
-                            role: 'assistant',
-                            content: displayedTextRef.current,
-                            isStreaming: true
-                        };
-                    }
-                    return newMessages;
-                });
-                if (onComplete) onComplete();
-                return;
-            }
-
-            const currentTime = audio.currentTime;
-
-            // Find how many characters should be visible at current time
-            let visibleChars = 0;
-            for (let i = 0; i < charStartTimes.length; i++) {
-                if (charStartTimes[i] <= currentTime) {
-                    visibleChars = i + 1;
-                } else {
-                    break;
-                }
-            }
-
-            // Only update if we have new characters to show
-            if (visibleChars > lastCharIndex) {
-                lastCharIndex = visibleChars;
-                const visibleText = characters.slice(0, visibleChars).join('');
-                const currentText = baseDisplayed + prefix + visibleText;
-
-                setChatMessages(prev => {
-                    const newMessages = [...prev];
-                    if (newMessages.length > 0 && newMessages[newMessages.length - 1].role === 'assistant') {
-                        newMessages[newMessages.length - 1] = {
-                            role: 'assistant',
-                            content: currentText,
-                            isStreaming: true
-                        };
-                    }
-                    return newMessages;
-                });
-            }
-
-            // Continue animation
-            animationFrame = requestAnimationFrame(updateText);
-        };
-
-        // Start the animation loop
-        animationFrame = requestAnimationFrame(updateText);
-
-        // Return cleanup function
+    useEffect(() => {
+        window.addEventListener('mousemove', resize);
+        window.addEventListener('mouseup', stopResizing);
         return () => {
-            if (animationFrame) {
-                cancelAnimationFrame(animationFrame);
-            }
+            window.removeEventListener('mousemove', resize);
+            window.removeEventListener('mouseup', stopResizing);
         };
-    }, []);
-
-    // Fallback: Animate text character by character based on audio duration
-    const animateTextWithDuration = useCallback((textToAnimate, audioDuration, onComplete) => {
-        const baseDisplayed = displayedTextRef.current;
-        const prefix = baseDisplayed ? ' ' : '';
-        const fullText = prefix + textToAnimate;
-        const charCount = fullText.length;
-
-        // Calculate delay per character based on audio duration
-        const totalDuration = audioDuration ? audioDuration * 1000 : charCount * 60;
-        const delayPerChar = Math.max(15, totalDuration / charCount);
-
-        let currentIndex = 0;
-        let timeoutId = null;
-
-        const animateNext = () => {
-            if (currentIndex < charCount) {
-                currentIndex++;
-                const currentText = baseDisplayed + fullText.substring(0, currentIndex);
-
-                setChatMessages(prev => {
-                    const newMessages = [...prev];
-                    if (newMessages.length > 0 && newMessages[newMessages.length - 1].role === 'assistant') {
-                        newMessages[newMessages.length - 1] = {
-                            role: 'assistant',
-                            content: currentText,
-                            isStreaming: true
-                        };
-                    }
-                    return newMessages;
-                });
-
-                timeoutId = setTimeout(animateNext, delayPerChar);
-            } else {
-                displayedTextRef.current = baseDisplayed + fullText;
-                if (onComplete) onComplete();
-            }
-        };
-
-        animateNext();
-
-        // Return cleanup function
-        return () => {
-            if (timeoutId) clearTimeout(timeoutId);
-        };
-    }, []);
-
-    // Auto-start listening for conversation mode
-    const autoStartListening = useCallback(() => {
-        if (shouldAutoListenRef.current && !isTeacherThinking) {
-            // Small delay before starting to listen again
-            setTimeout(() => {
-                if (shouldAutoListenRef.current && !isTeacherThinking && !isTeacherSpeaking) {
-                    // Trigger startListening
-                    const listenEvent = new CustomEvent('autoStartListening');
-                    window.dispatchEvent(listenEvent);
-                }
-            }, 500);
-        }
-    }, [isTeacherThinking, isTeacherSpeaking]);
-
-    // Play next audio in queue - reveals text in sync with speech
-    const playNextInQueue = useCallback(async () => {
-        if (audioQueueRef.current.length === 0) {
-            isPlayingQueueRef.current = false;
-            setIsTeacherSpeaking(false);
-            setIsVoiceMode(false);
-            setChatMessages(prev => {
-                const newMessages = [...prev];
-                if (newMessages.length > 0 && newMessages[newMessages.length - 1].role === 'assistant') {
-                    newMessages[newMessages.length - 1] = {
-                        ...newMessages[newMessages.length - 1],
-                        isStreaming: false
-                    };
-                }
-                return newMessages;
-            });
-
-            // Auto-restart listening in conversation mode
-            autoStartListening();
-            return;
-        }
-
-        isPlayingQueueRef.current = true;
-        setIsTeacherSpeaking(true);
-
-        const textToSpeak = audioQueueRef.current.shift();
-        let cleanupAnimation = null;
-
-        try {
-            // Request audio WITH timestamps for precise sync
-            const response = await fetch(`${API_BASE_URL}/teacher/speak`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    text: textToSpeak,
-                    format: 'base64',
-                    with_timestamps: true
-                })
-            });
-
-            if (!response.ok) {
-                cleanupAnimation = animateTextWithDuration(textToSpeak, null, () => {
-                    setTimeout(() => playNextInQueue(), 200);
-                });
-                return;
-            }
-
-            const data = await response.json();
-
-            if (data.success && data.audio) {
-                const audio = new Audio(`data:audio/mpeg;base64,${data.audio}`);
-                audioRef.current = audio;
-
-                // Check if we have alignment data for precise sync
-                const hasAlignment = data.alignment &&
-                    data.alignment.character_start_times_seconds &&
-                    data.alignment.character_start_times_seconds.length > 0;
-
-                audio.onplay = () => {
-                    if (hasAlignment) {
-                        // Use precise character-level sync
-                        cleanupAnimation = animateTextWithTimestamps(textToSpeak, data.alignment, audio, null);
-                    } else {
-                        // Fallback to duration-based animation
-                        const duration = audio.duration || (textToSpeak.length * 0.06);
-                        cleanupAnimation = animateTextWithDuration(textToSpeak, duration, null);
-                    }
-                };
-
-                audio.onended = () => {
-                    if (cleanupAnimation) cleanupAnimation();
-                    // Ensure full text is shown
-                    displayedTextRef.current += (displayedTextRef.current ? ' ' : '') + textToSpeak;
-                    setChatMessages(prev => {
-                        const newMessages = [...prev];
-                        if (newMessages.length > 0 && newMessages[newMessages.length - 1].role === 'assistant') {
-                            newMessages[newMessages.length - 1] = {
-                                role: 'assistant',
-                                content: displayedTextRef.current,
-                                isStreaming: audioQueueRef.current.length > 0
-                            };
-                        }
-                        return newMessages;
-                    });
-                    playNextInQueue();
-                };
-
-                audio.onerror = () => {
-                    if (cleanupAnimation) cleanupAnimation();
-                    displayedTextRef.current += (displayedTextRef.current ? ' ' : '') + textToSpeak;
-                    setChatMessages(prev => {
-                        const newMessages = [...prev];
-                        if (newMessages.length > 0 && newMessages[newMessages.length - 1].role === 'assistant') {
-                            newMessages[newMessages.length - 1] = {
-                                role: 'assistant',
-                                content: displayedTextRef.current,
-                                isStreaming: true
-                            };
-                        }
-                        return newMessages;
-                    });
-                    setTimeout(() => playNextInQueue(), 300);
-                };
-
-                try {
-                    await audio.play();
-                } catch (playErr) {
-                    console.error('Audio play failed:', playErr);
-                    cleanupAnimation = animateTextWithDuration(textToSpeak, null, () => {
-                        setTimeout(() => playNextInQueue(), 200);
-                    });
-                }
-            } else {
-                cleanupAnimation = animateTextWithDuration(textToSpeak, null, () => {
-                    setTimeout(() => playNextInQueue(), 200);
-                });
-            }
-        } catch (err) {
-            console.error('TTS fetch error:', err);
-            cleanupAnimation = animateTextWithDuration(textToSpeak, null, () => {
-                setTimeout(() => playNextInQueue(), 200);
-            });
-        }
-    }, [animateTextWithTimestamps, animateTextWithDuration]);
-
-    // Queue text for TTS (splits by sentences) - only used in voice mode
-    const queueForSpeech = useCallback((fullText) => {
-        if (!fullText) return;
-
-        // Split by sentence endings (., !, ?) - handle edge cases better
-        const sentences = fullText.split(/(?<=[.!?])\s+/).filter(s => s.trim());
-
-        // If no sentences found (no punctuation), just use the whole text
-        if (sentences.length === 0) {
-            sentences.push(fullText);
-        }
-
-        for (const sentence of sentences) {
-            if (sentence.trim()) {
-                audioQueueRef.current.push(sentence.trim());
-            }
-        }
-
-        // Start playing if not already
-        if (!isPlayingQueueRef.current && audioQueueRef.current.length > 0) {
-            isPlayingQueueRef.current = true;
-            playNextInQueue();
-        }
-    }, [playNextInQueue]);
-
-    // Flush remaining text at end of stream (not needed in new approach)
-    const flushPendingText = useCallback(() => {
-        // Not used anymore - keeping for compatibility
-    }, []);
-
-    // Stop speaking
-    const stopSpeaking = useCallback(() => {
-        // Clear the queue
-        audioQueueRef.current = [];
-        pendingTextRef.current = '';
-        displayedTextRef.current = '';
-        isPlayingQueueRef.current = false;
-
-        if (audioRef.current) {
-            audioRef.current.pause();
-            audioRef.current = null;
-        }
-        setIsTeacherSpeaking(false);
-        setIsVoiceMode(false);
-    }, []);
+    }, [resize, stopResizing]);
 
     // Send message to AI Teacher (TEXT MODE - no voice)
     const sendMessage = useCallback(async () => {
@@ -482,9 +190,6 @@ const ImmersiveVisualizer = ({
 
         const userMessage = chatInput.trim();
         setChatInput('');
-
-        // Stop any ongoing speech before new message
-        stopSpeaking();
 
         // Add user message
         setChatMessages(prev => [...prev, { role: 'user', content: userMessage }]);
@@ -564,245 +269,6 @@ const ImmersiveVisualizer = ({
         }
     }, [chatInput, isTeacherThinking, currentStepIndex]);
 
-    // Voice input - Start listening (enables conversation mode)
-    const startListening = useCallback(() => {
-        if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
-            alert('Speech recognition is not supported in your browser. Please use Chrome or Edge.');
-            return;
-        }
-
-        // Stop any current audio playback
-        stopSpeaking();
-
-        // Enable conversation mode - will auto-listen after AI responds
-        shouldAutoListenRef.current = true;
-        setIsConversationMode(true);
-
-        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-        const recognition = new SpeechRecognition();
-
-        recognition.continuous = false;
-        recognition.interimResults = true;
-        recognition.lang = 'en-US';
-
-        let finalTranscriptResult = '';
-
-        recognition.onstart = () => {
-            setIsListening(true);
-            setChatInput('');
-        };
-
-        recognition.onresult = (event) => {
-            let interimTranscript = '';
-            let finalTranscript = '';
-
-            for (let i = event.resultIndex; i < event.results.length; i++) {
-                const transcript = event.results[i][0].transcript;
-                if (event.results[i].isFinal) {
-                    finalTranscript += transcript;
-                    finalTranscriptResult = finalTranscript;
-                } else {
-                    interimTranscript += transcript;
-                }
-            }
-
-            // Update input with what's being heard
-            setChatInput(finalTranscript || interimTranscript);
-        };
-
-        recognition.onerror = (event) => {
-            console.error('Speech recognition error:', event.error);
-            setIsListening(false);
-            // Don't disable conversation mode on error - just stop this session
-            if (event.error === 'not-allowed') {
-                shouldAutoListenRef.current = false;
-                setIsConversationMode(false);
-                alert('Microphone access was denied. Please allow microphone access to use voice input.');
-            } else if (event.error === 'no-speech') {
-                // No speech detected - in conversation mode, we might want to keep listening
-                // But for now, just wait for next auto-listen
-            }
-        };
-
-        recognition.onend = () => {
-            setIsListening(false);
-            // Auto-send if we got a final transcript
-            if (finalTranscriptResult.trim()) {
-                setChatInput(finalTranscriptResult.trim());
-                setTimeout(() => {
-                    const sendEvent = new CustomEvent('voiceSendMessage', { detail: finalTranscriptResult.trim() });
-                    window.dispatchEvent(sendEvent);
-                }, 50);
-            }
-        };
-
-        recognitionRef.current = recognition;
-        recognition.start();
-    }, [stopSpeaking]);
-
-    // Voice input - Stop listening and exit conversation mode
-    const stopListening = useCallback(() => {
-        if (recognitionRef.current) {
-            recognitionRef.current.stop();
-            recognitionRef.current = null;
-        }
-        setIsListening(false);
-        // Disable conversation mode when manually stopping
-        shouldAutoListenRef.current = false;
-        setIsConversationMode(false);
-    }, []);
-
-    // Handle auto-listen event
-    useEffect(() => {
-        const handleAutoListen = () => {
-            if (shouldAutoListenRef.current && !isTeacherThinking && !isTeacherSpeaking && !isListening) {
-                startListening();
-            }
-        };
-
-        window.addEventListener('autoStartListening', handleAutoListen);
-        return () => window.removeEventListener('autoStartListening', handleAutoListen);
-    }, [startListening, isTeacherThinking, isTeacherSpeaking, isListening]);
-
-    // Cleanup recognition on unmount
-    useEffect(() => {
-        return () => {
-            if (recognitionRef.current) {
-                recognitionRef.current.stop();
-            }
-            shouldAutoListenRef.current = false;
-        };
-    }, []);
-
-    // Send voice message directly (VOICE MODE - speak and show text together)
-    const sendVoiceMessage = useCallback(async (message) => {
-        if (!message.trim() || isTeacherThinking) return;
-
-        console.log('=== VOICE MESSAGE START ===');
-        console.log('Voice message sending:', message);
-
-        // Stop any ongoing speech
-        stopSpeaking();
-
-        setChatInput('');
-        setChatMessages(prev => [...prev, { role: 'user', content: message }]);
-        setIsTeacherThinking(true);
-        setIsVoiceMode(true);
-
-        // Reset for voice mode
-        displayedTextRef.current = '';
-        audioQueueRef.current = [];
-
-        // Add placeholder - will be filled as we speak
-        setChatMessages(prev => [...prev, { role: 'assistant', content: '', isStreaming: true }]);
-
-        try {
-            console.log('Fetching chat response (sync)...');
-            // Use sync endpoint for voice mode - simpler and more reliable
-            const response = await fetch(`${API_BASE_URL}/teacher/chat-sync`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    message: message,
-                    currentStepIndex: currentStepIndex
-                })
-            });
-
-            console.log('Response status:', response.status);
-
-            if (!response.ok) {
-                throw new Error(`HTTP error: ${response.status}`);
-            }
-
-            const data = await response.json();
-            console.log('Response data:', data);
-
-            const fullResponse = data.response || '';
-            console.log('Full response length:', fullResponse.length);
-
-            setIsTeacherThinking(false);
-
-            // Now start speaking - text will be revealed as each sentence plays
-            if (fullResponse) {
-                console.log('Calling queueForSpeech...');
-                queueForSpeech(fullResponse);
-            } else {
-                console.log('No response, showing error');
-                setIsVoiceMode(false);
-                setChatMessages(prev => {
-                    const newMessages = [...prev];
-                    if (newMessages.length > 0 && newMessages[newMessages.length - 1].role === 'assistant') {
-                        newMessages[newMessages.length - 1] = {
-                            role: 'assistant',
-                            content: 'Sorry, I couldn\'t generate a response.',
-                            isStreaming: false
-                        };
-                    }
-                    return newMessages;
-                });
-            }
-
-        } catch (err) {
-            console.error('Voice chat error:', err);
-            setIsTeacherThinking(false);
-            setIsVoiceMode(false);
-            setChatMessages(prev => {
-                const newMessages = [...prev];
-                if (newMessages.length > 0 && newMessages[newMessages.length - 1].role === 'assistant') {
-                    newMessages[newMessages.length - 1] = {
-                        role: 'assistant',
-                        content: "Sorry, I encountered an error. Please try again.",
-                        isStreaming: false
-                    };
-                }
-                return newMessages;
-            });
-        }
-    }, [isTeacherThinking, currentStepIndex, queueForSpeech, stopSpeaking]);
-
-    // Resizing logic
-    const startResizing = useCallback((e) => {
-        setIsResizing(true);
-        e.preventDefault(); // Prevent text selection
-    }, []);
-
-    const stopResizing = useCallback(() => {
-        setIsResizing(false);
-    }, []);
-
-    const resize = useCallback((e) => {
-        if (isResizing) {
-            // Calculate width from the right edge
-            const newWidth = window.innerWidth - e.clientX;
-            // Min width 300px, Max width 800px (or percentage of screen)
-            if (newWidth > 300 && newWidth < window.innerWidth * 0.6) {
-                setSidebarWidth(newWidth);
-            }
-        }
-    }, [isResizing]);
-
-    useEffect(() => {
-        window.addEventListener('mousemove', resize);
-        window.addEventListener('mouseup', stopResizing);
-        return () => {
-            window.removeEventListener('mousemove', resize);
-            window.removeEventListener('mouseup', stopResizing);
-        };
-    }, [resize, stopResizing]);
-
-    // Handle voice message send event - must be after sendVoiceMessage is defined
-    useEffect(() => {
-        const handleVoiceSend = (e) => {
-            const message = e.detail;
-            console.log('Voice send event received:', message); // Debug log
-            if (message && !isTeacherThinking) {
-                sendVoiceMessage(message);
-            }
-        };
-
-        window.addEventListener('voiceSendMessage', handleVoiceSend);
-        return () => window.removeEventListener('voiceSendMessage', handleVoiceSend);
-    }, [isTeacherThinking, sendVoiceMessage]);
 
     // Handle Enter key in chat input
     const handleChatKeyDown = (e) => {
@@ -822,8 +288,6 @@ const ImmersiveVisualizer = ({
             return;
         }
 
-        // Stop any ongoing speech
-        stopSpeaking();
 
         // Add user message
         setChatMessages(prev => [...prev, { role: 'user', content: question }]);
@@ -1108,28 +572,35 @@ const ImmersiveVisualizer = ({
                         className={`absolute left-0 top-0 bottom-0 w-1 cursor-ew-resize hover:bg-teal-500/50 transition-colors z-10 ${isResizing ? 'bg-teal-500' : 'bg-transparent'}`}
                         style={{ transform: 'translateX(-50%)' }}
                     />
-                    <div className="px-4 py-2 border-b border-slate-800 flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                            <div className="flex gap-1.5">
-                                <div className="w-3 h-3 rounded-full bg-red-500/80" />
-                                <div className="w-3 h-3 rounded-full bg-yellow-500/80" />
-                                <div className="w-3 h-3 rounded-full bg-green-500/80" />
-                            </div>
-                        </div>
+                    <div className="px-4 py-2 border-b border-slate-800 flex items-center justify-center">
                         <div className="flex items-center gap-1 bg-slate-800/50 rounded-lg p-1">
                             <button
                                 onClick={() => setLeftPanelTab('code')}
                                 className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all ${leftPanelTab === 'code'
-                                    ? 'bg-slate-700 text-white'
+                                    ? 'bg-slate-700 text-white shadow-sm'
                                     : 'text-slate-400 hover:text-slate-300'
                                     }`}
                             >
                                 Source Code
                             </button>
                             <button
+                                onClick={() => setLeftPanelTab('visual')}
+                                className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all flex items-center gap-1.5 ${leftPanelTab === 'visual'
+                                    ? 'bg-teal-600 text-white shadow-sm'
+                                    : 'text-slate-400 hover:text-slate-300'
+                                    }`}
+                            >
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                    <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+                                    <circle cx="8.5" cy="8.5" r="1.5" />
+                                    <polyline points="21 15 16 10 5 21" />
+                                </svg>
+                                Visual Explanation
+                            </button>
+                            <button
                                 onClick={() => setLeftPanelTab('teacher')}
                                 className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all flex items-center gap-1.5 ${leftPanelTab === 'teacher'
-                                    ? 'bg-gradient-to-r from-purple-600 to-blue-600 text-white'
+                                    ? 'bg-gradient-to-r from-purple-600 to-blue-600 text-white shadow-sm'
                                     : 'text-slate-400 hover:text-slate-300'
                                     }`}
                             >
@@ -1185,54 +656,16 @@ const ImmersiveVisualizer = ({
                     {/* AI Teacher Tab */}
                     {leftPanelTab === 'teacher' && (
                         <div className="flex-1 flex flex-col overflow-hidden">
-                            {/* Header with voice toggle */}
+                            {/* Header */}
                             <div className="flex items-center justify-between px-4 py-2 border-b border-slate-700/50">
                                 <div className="flex items-center gap-2">
-                                    <div className={`w-8 h-8 rounded-full bg-gradient-to-br from-purple-500 to-blue-500 flex items-center justify-center ${isTeacherSpeaking ? 'animate-pulse' : ''}`}>
+                                    <div className="w-8 h-8 rounded-full bg-gradient-to-br from-purple-500 to-blue-500 flex items-center justify-center">
                                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2">
                                             <path d="M12 2a3 3 0 0 0-3 3v1a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z" />
                                             <path d="M19 10a7 7 0 0 1-14 0" />
                                         </svg>
                                     </div>
                                     <span className="text-sm font-medium text-white">AI Teacher</span>
-                                    {isTeacherSpeaking && (
-                                        <span className="text-xs text-purple-400 animate-pulse">Speaking...</span>
-                                    )}
-                                </div>
-                                <div className="flex items-center gap-2">
-                                    {isTeacherSpeaking && (
-                                        <button
-                                            onClick={stopSpeaking}
-                                            className="p-1.5 rounded-lg bg-red-500/20 text-red-400 hover:bg-red-500/30 transition-all"
-                                            title="Stop speaking"
-                                        >
-                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
-                                                <rect x="6" y="6" width="12" height="12" rx="2" />
-                                            </svg>
-                                        </button>
-                                    )}
-                                    <button
-                                        onClick={() => setVoiceEnabled(!voiceEnabled)}
-                                        className={`p-1.5 rounded-lg transition-all ${voiceEnabled
-                                            ? 'bg-purple-500/20 text-purple-400'
-                                            : 'bg-slate-700 text-slate-500'
-                                            }`}
-                                        title={voiceEnabled ? 'Voice on' : 'Voice off'}
-                                    >
-                                        {voiceEnabled ? (
-                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                                <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" fill="currentColor" />
-                                                <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
-                                                <path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
-                                            </svg>
-                                        ) : (
-                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                                <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" fill="currentColor" />
-                                                <line x1="23" y1="9" x2="17" y2="15" />
-                                                <line x1="17" y1="9" x2="23" y2="15" />
-                                            </svg>
-                                        )}
-                                    </button>
                                 </div>
                             </div>
 
@@ -1322,90 +755,46 @@ const ImmersiveVisualizer = ({
                                         value={chatInput}
                                         onChange={(e) => setChatInput(e.target.value)}
                                         onKeyDown={handleChatKeyDown}
-                                        placeholder={isListening ? "Listening..." : "Ask about the code..."}
+                                        placeholder="Ask about the code..."
                                         className="flex-1 bg-transparent text-sm text-white placeholder-slate-500 outline-none"
-                                        disabled={isTeacherThinking || isListening}
+                                        disabled={isTeacherThinking}
                                     />
 
-                                    {/* Show mic button when input is empty, send button when there's text */}
-                                    {chatInput.trim() ? (
-                                        <button
-                                            onClick={sendMessage}
-                                            disabled={isTeacherThinking}
-                                            className="p-2 rounded-lg transition-all bg-gradient-to-r from-purple-500 to-blue-500 text-white hover:from-purple-600 hover:to-blue-600"
-                                        >
-                                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                                <line x1="22" y1="2" x2="11" y2="13" />
-                                                <polygon points="22 2 15 22 11 13 2 9 22 2" />
-                                            </svg>
-                                        </button>
-                                    ) : (
-                                        <button
-                                            onClick={isListening ? stopListening : startListening}
-                                            disabled={isTeacherThinking}
-                                            className={`p-2 rounded-lg transition-all ${isListening
-                                                ? 'bg-red-500 text-white animate-pulse'
-                                                : isConversationMode
-                                                    ? 'bg-purple-600 text-white ring-2 ring-purple-400 ring-opacity-50'
-                                                    : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
-                                                }`}
-                                            title={isListening ? "Stop listening" : isConversationMode ? "Conversation mode active" : "Start voice input"}
-                                        >
-                                            {isListening ? (
-                                                /* Stop icon when listening */
-                                                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-                                                    <rect x="6" y="6" width="12" height="12" rx="2" />
-                                                </svg>
-                                            ) : (
-                                                /* Microphone icon when not listening */
-                                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                                    <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
-                                                    <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
-                                                    <line x1="12" y1="19" x2="12" y2="23" />
-                                                    <line x1="8" y1="23" x2="16" y2="23" />
-                                                </svg>
-                                            )}
-                                        </button>
-                                    )}
-                                </div>
-
-                                {/* Listening / Conversation mode indicator */}
-                                {isListening && (
-                                    <div className="flex items-center justify-center gap-2 mt-2 text-xs text-red-400">
-                                        <span className="flex gap-1">
-                                            <span className="w-1.5 h-1.5 bg-red-500 rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></span>
-                                            <span className="w-1.5 h-1.5 bg-red-500 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></span>
-                                            <span className="w-1.5 h-1.5 bg-red-500 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></span>
-                                        </span>
-                                        <span>Listening... Speak now</span>
-                                    </div>
-                                )}
-
-                                {/* Conversation mode indicator - shows when AI is speaking and will auto-listen */}
-                                {isConversationMode && isTeacherSpeaking && !isListening && (
-                                    <div className="flex items-center justify-center gap-2 mt-2 text-xs text-purple-400">
-                                        <svg className="w-3 h-3 animate-pulse" viewBox="0 0 24 24" fill="currentColor">
-                                            <circle cx="12" cy="12" r="10" />
+                                    <button
+                                        onClick={sendMessage}
+                                        disabled={isTeacherThinking || !chatInput.trim()}
+                                        className={`p-2 rounded-lg transition-all ${!chatInput.trim() || isTeacherThinking
+                                            ? 'bg-slate-700 text-slate-500'
+                                            : 'bg-gradient-to-r from-purple-500 to-blue-500 text-white hover:from-purple-600 hover:to-blue-600'
+                                            }`}
+                                    >
+                                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                            <line x1="22" y1="2" x2="11" y2="13" />
+                                            <polygon points="22 2 15 22 11 13 2 9 22 2" />
                                         </svg>
-                                        <span>Voice conversation active • Will listen after response</span>
-                                    </div>
-                                )}
-
-                                {/* Exit conversation mode button */}
-                                {isConversationMode && !isListening && !isTeacherSpeaking && !isTeacherThinking && (
-                                    <div className="flex items-center justify-center gap-2 mt-2">
-                                        <button
-                                            onClick={() => {
-                                                shouldAutoListenRef.current = false;
-                                                setIsConversationMode(false);
-                                            }}
-                                            className="text-xs px-3 py-1 rounded-full bg-slate-700/50 text-slate-400 hover:bg-slate-700 hover:text-slate-300 transition-all"
-                                        >
-                                            Exit voice mode
-                                        </button>
-                                    </div>
-                                )}
+                                    </button>
+                                </div>
                             </div>
+                        </div>
+                    )}
+
+                    {/* Visual Explanation Tab */}
+                    {leftPanelTab === 'visual' && (
+                        <div className="flex-1 flex flex-col items-center justify-center p-8 text-center animate-fade-in">
+                            <div className="w-16 h-16 rounded-2xl bg-teal-500/10 flex items-center justify-center mb-4">
+                                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-teal-400">
+                                    <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+                                    <circle cx="8.5" cy="8.5" r="1.5" />
+                                    <polyline points="21 15 16 10 5 21" />
+                                </svg>
+                            </div>
+                            <h3 className="text-lg font-semibold text-white mb-2">Visual Explanation</h3>
+                            <p className="text-slate-400 max-w-xs">
+                                Visual diagrams and flowcharts for the current execution step will appear here.
+                            </p>
+                            <span className="mt-4 text-xs font-medium px-2.5 py-1 rounded-full bg-teal-500/10 text-teal-400 border border-teal-500/20">
+                                Coming Soon
+                            </span>
                         </div>
                     )}
                 </div>
