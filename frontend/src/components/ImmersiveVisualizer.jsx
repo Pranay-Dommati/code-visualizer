@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
+import VisualExplanationPanel from './VisualExplanationPanel';
 
 const API_BASE_URL = 'http://localhost:5000/api';
 
@@ -781,21 +782,8 @@ const ImmersiveVisualizer = ({
 
                     {/* Visual Explanation Tab */}
                     {leftPanelTab === 'visual' && (
-                        <div className="flex-1 flex flex-col items-center justify-center p-8 text-center animate-fade-in">
-                            <div className="w-16 h-16 rounded-2xl bg-teal-500/10 flex items-center justify-center mb-4">
-                                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-teal-400">
-                                    <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
-                                    <circle cx="8.5" cy="8.5" r="1.5" />
-                                    <polyline points="21 15 16 10 5 21" />
-                                </svg>
-                            </div>
-                            <h3 className="text-lg font-semibold text-white mb-2">Visual Explanation</h3>
-                            <p className="text-slate-400 max-w-xs">
-                                Visual diagrams and flowcharts for the current execution step will appear here.
-                            </p>
-                            <span className="mt-4 text-xs font-medium px-2.5 py-1 rounded-full bg-teal-500/10 text-teal-400 border border-teal-500/20">
-                                Coming Soon
-                            </span>
+                        <div className="flex-1 bg-slate-900 relative">
+                            <VisualExplanationPanel width={sidebarWidth} height={window.innerHeight - 150} />
                         </div>
                     )}
                 </div>

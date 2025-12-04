@@ -1,5 +1,6 @@
-flask==3.0.0
-flask-cors==4.0.0
-python-dotenv==1.0.0
-gunicorn==21.2.0
-google-generativeai>=0.8.0
+fastapi
+uvicorn[standard]
+websockets
+google-auth
+google-auth-oauthlib
+python-dotenv

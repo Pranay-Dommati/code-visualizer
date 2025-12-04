@@ -49,7 +49,8 @@ def health_check():
         "service": "Python Code Visualizer API",
         "version": "1.0.0",
         "ai_narrator": narrator.is_available,
-        "ai_teacher": teacher.gemini_available
+        "ai_teacher": teacher.gemini_available,
+        "tts_available": teacher.elevenlabs_available
     })
 
 
@@ -161,6 +162,78 @@ def teacher_chat_sync():
         return jsonify({"success": False, "error": str(e)}), 500
 
 
+@app.route('/api/teacher/speak', methods=['POST'])
+def teacher_speak():
+    """
+    Convert text to speech using ElevenLabs.
+    
+    Request body:
+    {
+        "text": "text to speak",
+        "format": "base64" or "binary",
+        "with_timestamps": true/false (optional)
+    }
+    
+    Returns: audio/mpeg data or base64 encoded audio
+    If with_timestamps=true, also returns character-level alignment data
+    """
+    try:
+        data = request.get_json()
+        
+        if not data or 'text' not in data:
+            return jsonify({"success": False, "error": "No text provided"}), 400
+        
+        text = data['text']
+        return_format = data.get('format', 'base64')  # 'base64' or 'binary'
+        with_timestamps = data.get('with_timestamps', False)
+        
+        if not teacher.elevenlabs_available:
+            return jsonify({"success": False, "error": "TTS not available"}), 503
+        
+        # Use timestamps endpoint if requested
+        if with_timestamps:
+            result = teacher.text_to_speech_with_timestamps(text)
+            if result:
+                return jsonify({
+                    "success": True,
+                    "audio": result["audio"],
+                    "alignment": result["alignment"],
+                    "format": "mp3"
+                })
+            else:
+                # Fallback to regular TTS without timestamps
+                audio_data = teacher.text_to_speech(text)
+                if audio_data:
+                    audio_base64 = base64.b64encode(audio_data).decode('utf-8')
+                    return jsonify({
+                        "success": True,
+                        "audio": audio_base64,
+                        "format": "mp3"
+                    })
+                return jsonify({"success": False, "error": "TTS generation failed"}), 500
+        
+        audio_data = teacher.text_to_speech(text)
+        
+        if audio_data:
+            if return_format == 'binary':
+                return Response(
+                    audio_data,
+                    mimetype='audio/mpeg',
+                    headers={'Content-Disposition': 'inline'}
+                )
+            else:
+                # Return as base64
+                audio_base64 = base64.b64encode(audio_data).decode('utf-8')
+                return jsonify({
+                    "success": True,
+                    "audio": audio_base64,
+                    "format": "mp3"
+                })
+        else:
+            return jsonify({"success": False, "error": "TTS generation failed"}), 500
+        
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
 
 
 @app.route('/api/teacher/clear', methods=['POST'])
@@ -169,6 +242,90 @@ def teacher_clear():
     try:
         teacher.clear_history()
         return jsonify({"success": True, "message": "History cleared"})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route('/api/teacher/classify-intent', methods=['POST'])
+def teacher_classify_intent():
+    """
+    Classify user intent using AI to determine if they want to continue or ask a question.
+    
+    Request body:
+    {
+        "message": "user's spoken message"
+    }
+    
+    Response:
+    {
+        "success": true,
+        "intent": "continue" or "question",
+        "confidence": 0.0 to 1.0
+    }
+    """
+    try:
+        data = request.get_json()
+        
+        if not data or 'message' not in data:
+            return jsonify({"success": False, "error": "No message provided"}), 400
+        
+        message = data.get('message', '').strip()
+        
+        if not message:
+            return jsonify({"success": False, "error": "Empty message"}), 400
+        
+        result = teacher.classify_intent(message)
+        
+        return jsonify({
+            "success": True,
+            "intent": result['intent'],
+            "confidence": result['confidence']
+        })
+        
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route('/api/teacher/step-chat', methods=['POST'])
+def teacher_step_chat():
+    """
+    Chat about a specific step in the code execution.
+    This is for inline step-level conversations.
+    
+    Request body:
+    {
+        "message": "user's question",
+        "stepContext": {
+            "stepIndex": 0,
+            "currentLine": 3,
+            "currentCode": "max_val = nums[0]",
+            "explanation": "We're starting by assuming...",
+            "variables": {...},
+            "previousMessages": [...]
+        },
+        "code": "full code",
+        "codeLines": ["line1", "line2", ...]
+    }
+    """
+    try:
+        data = request.get_json()
+        
+        if not data or 'message' not in data:
+            return jsonify({"success": False, "error": "No message provided"}), 400
+        
+        message = data['message']
+        step_context = data.get('stepContext', {})
+        code = data.get('code', '')
+        code_lines = data.get('codeLines', [])
+        
+        # Build a focused prompt for this specific step
+        response = teacher.step_chat(message, step_context, code, code_lines)
+        
+        return jsonify({
+            "success": True,
+            "response": response
+        })
+        
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
 
