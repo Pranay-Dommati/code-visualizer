@@ -9,7 +9,8 @@ const ImmersiveVisualizer = ({
     code,
     codeLines,
     isLoading,
-    loadingPhase
+    loadingPhase,
+    isGenerating = false
 }) => {
     const [visibleSteps, setVisibleSteps] = useState([]);
     const [currentStepIndex, setCurrentStepIndex] = useState(-1);
@@ -989,7 +990,7 @@ const ImmersiveVisualizer = ({
                                 })}
 
                                 {/* End Marker - only show when not streaming and all steps are done */}
-                                {!isStreaming && currentStepIndex >= steps.length - 1 && visibleSteps.length > 0 && steps.length > 0 && (
+                                {!isStreaming && !isGenerating && currentStepIndex >= steps.length - 1 && visibleSteps.length > 0 && steps.length > 0 && (
                                     <div className="relative pl-16 pt-4 animate-fade-in">
                                         <div className="absolute left-4 w-5 h-5 rounded-full bg-green-500 border-2 border-green-400 shadow-lg shadow-green-500/50" />
                                         <div className="flex items-center gap-4 bg-green-500/10 border border-green-500/30 rounded-2xl p-5">
@@ -1009,7 +1010,7 @@ const ImmersiveVisualizer = ({
                                 )}
 
                                 {/* Waiting for more steps indicator - show during streaming */}
-                                {(isStreaming) && (
+                                {(isStreaming || isGenerating) && (
                                     <div className="relative pl-16 pt-4">
                                         <div className={`absolute left-4 w-5 h-5 rounded-full border-2 animate-pulse ${isStreaming ? 'bg-blue-600 border-blue-500' : 'bg-slate-700 border-slate-600'}`} />
                                         <div className="text-slate-500 text-sm flex items-center gap-2">

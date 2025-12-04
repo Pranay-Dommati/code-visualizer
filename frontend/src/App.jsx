@@ -18,286 +18,287 @@ for i in range(n):
 print(arr)`;
 
 function App() {
-  const [code, setCode] = useState('');
-  const [autoGenerateInput, setAutoGenerateInput] = useState(false);
-  const [isRunning, setIsRunning] = useState(false);
-  const [steps, setSteps] = useState([]);
-  const [error, setError] = useState(null);
-  
-  // Input modal state
-  const [showInputModal, setShowInputModal] = useState(false);
-  const [detectedInputs, setDetectedInputs] = useState([]);
-  const [codeMetadata, setCodeMetadata] = useState(null);
-  
-  // Immersive visualizer state
-  const [showVisualizer, setShowVisualizer] = useState(false);
-  const [isLoadingTrace, setIsLoadingTrace] = useState(false);
-  const [loadingPhase, setLoadingPhase] = useState(0);
+    const [code, setCode] = useState('');
+    const [autoGenerateInput, setAutoGenerateInput] = useState(false);
+    const [isRunning, setIsRunning] = useState(false);
+    const [steps, setSteps] = useState([]);
+    const [error, setError] = useState(null);
 
-  // Detect inputs in the code
-  const detectInputs = useCallback(async (codeToCheck) => {
-    console.log('detectInputs: Starting fetch to', `${API_BASE_URL}/detect-inputs`);
-    try {
-      const response = await fetch(`${API_BASE_URL}/detect-inputs`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ code: codeToCheck })
-      });
-      
-      console.log('detectInputs: Response status:', response.status);
-      const data = await response.json();
-      console.log('detectInputs: Data received:', data);
-      return data;
-    } catch (err) {
-      console.error('detectInputs: Failed:', err);
-      return { hasInputs: false, inputs: [], count: 0, codeType: 'script' };
-    }
-  }, []);
+    // Input modal state
+    const [showInputModal, setShowInputModal] = useState(false);
+    const [detectedInputs, setDetectedInputs] = useState([]);
+    const [codeMetadata, setCodeMetadata] = useState(null);
 
-  // Run the actual trace with streaming
-  const runTrace = useCallback(async (inputValues = [], metadata = null) => {
-    setIsRunning(true);
-    setError(null);
-    setShowInputModal(false);
-    
-    // Open immersive visualizer immediately with loading state
-    setShowVisualizer(true);
-    setIsLoadingTrace(true);
-    setSteps([]);
-    
-    const meta = metadata || codeMetadata;
-    
-    // Animate through loading phases
-    setLoadingPhase(1); // Reading code
-    await new Promise(resolve => setTimeout(resolve, 400));
-    setLoadingPhase(2); // Analyzing
-    await new Promise(resolve => setTimeout(resolve, 400));
-    setLoadingPhase(3); // Preparing
-    
-    try {
-      // Use the streaming endpoint
-      const response = await fetch(`${API_BASE_URL}/trace-stream`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          code: code,
-          inputs: inputValues,
-          codeType: meta?.codeType || 'script',
-          functionName: meta?.functionName || null,
-          className: meta?.className || null,
-          inputTypes: meta?.inputs?.map(i => i.type) || []
-        })
-      });
-      
-      // Check if it's a streaming response
-      const contentType = response.headers.get('content-type');
-      
-      if (contentType && contentType.includes('text/event-stream')) {
-        // Handle streaming response
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = '';
-        let receivedFirstFrame = false;
-        
-        while (true) {
-          const { done, value } = await reader.read();
-          
-          if (done) break;
-          
-          buffer += decoder.decode(value, { stream: true });
-          
-          // Process complete SSE messages
-          const lines = buffer.split('\n\n');
-          buffer = lines.pop() || ''; // Keep incomplete message in buffer
-          
-          for (const line of lines) {
-            if (line.startsWith('data: ')) {
-              try {
-                const data = JSON.parse(line.slice(6));
-                
-                if (data.type === 'error') {
-                  setError(data.error);
-                  setSteps([]);
-                  setShowVisualizer(false);
-                  setIsLoadingTrace(false);
-                  setIsRunning(false);
-                  return;
+    // Immersive visualizer state
+    const [showVisualizer, setShowVisualizer] = useState(false);
+    const [isLoadingTrace, setIsLoadingTrace] = useState(false);
+    const [loadingPhase, setLoadingPhase] = useState(0);
+
+    // Detect inputs in the code
+    const detectInputs = useCallback(async (codeToCheck) => {
+        console.log('detectInputs: Starting fetch to', `${API_BASE_URL}/detect-inputs`);
+        try {
+            const response = await fetch(`${API_BASE_URL}/detect-inputs`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ code: codeToCheck })
+            });
+
+            console.log('detectInputs: Response status:', response.status);
+            const data = await response.json();
+            console.log('detectInputs: Data received:', data);
+            return data;
+        } catch (err) {
+            console.error('detectInputs: Failed:', err);
+            return { hasInputs: false, inputs: [], count: 0, codeType: 'script' };
+        }
+    }, []);
+
+    // Run the actual trace with streaming
+    const runTrace = useCallback(async (inputValues = [], metadata = null) => {
+        setIsRunning(true);
+        setError(null);
+        setShowInputModal(false);
+
+        // Open immersive visualizer immediately with loading state
+        setShowVisualizer(true);
+        setIsLoadingTrace(true);
+        setSteps([]);
+
+        const meta = metadata || codeMetadata;
+
+        // Animate through loading phases
+        setLoadingPhase(1); // Reading code
+        await new Promise(resolve => setTimeout(resolve, 400));
+        setLoadingPhase(2); // Analyzing
+        await new Promise(resolve => setTimeout(resolve, 400));
+        setLoadingPhase(3); // Preparing
+
+        try {
+            // Use the streaming endpoint
+            const response = await fetch(`${API_BASE_URL}/trace-stream`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    code: code,
+                    inputs: inputValues,
+                    codeType: meta?.codeType || 'script',
+                    functionName: meta?.functionName || null,
+                    className: meta?.className || null,
+                    inputTypes: meta?.inputs?.map(i => i.type) || []
+                })
+            });
+
+            // Check if it's a streaming response
+            const contentType = response.headers.get('content-type');
+
+            if (contentType && contentType.includes('text/event-stream')) {
+                // Handle streaming response
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                let buffer = '';
+                let receivedFirstFrame = false;
+
+                while (true) {
+                    const { done, value } = await reader.read();
+
+                    if (done) break;
+
+                    buffer += decoder.decode(value, { stream: true });
+
+                    // Process complete SSE messages
+                    const lines = buffer.split('\n\n');
+                    buffer = lines.pop() || ''; // Keep incomplete message in buffer
+
+                    for (const line of lines) {
+                        if (line.startsWith('data: ')) {
+                            try {
+                                const data = JSON.parse(line.slice(6));
+
+                                if (data.type === 'error') {
+                                    setError(data.error);
+                                    setSteps([]);
+                                    setShowVisualizer(false);
+                                    setIsLoadingTrace(false);
+                                    setIsRunning(false);
+                                    return;
+                                }
+
+                                if (data.type === 'metadata') {
+                                    setLoadingPhase(4); // Starting
+                                }
+
+                                if (data.type === 'frame') {
+                                    // Stop loading state on first frame
+                                    if (!receivedFirstFrame) {
+                                        receivedFirstFrame = true;
+                                        setIsLoadingTrace(false);
+                                    }
+
+                                    const frame = data.frame;
+                                    const transformedStep = {
+                                        lineNumber: frame.line,
+                                        code: frame.code,
+                                        explanation: frame.explanation,
+                                        variables: frame.locals,
+                                        changedVars: frame.changed_vars || [],
+                                        event: frame.event,
+                                        functionName: frame.function_name,
+                                        output: frame.output
+                                    };
+
+                                    // Add step progressively
+                                    setSteps(prev => [...prev, transformedStep]);
+                                }
+
+                                if (data.type === 'complete') {
+                                    // All frames received
+                                    setIsLoadingTrace(false);
+                                }
+                            } catch (parseError) {
+                                console.error('Failed to parse SSE data:', parseError);
+                            }
+                        }
+                    }
                 }
-                
-                if (data.type === 'metadata') {
-                  setLoadingPhase(4); // Starting
-                }
-                
-                if (data.type === 'frame') {
-                  // Stop loading state on first frame
-                  if (!receivedFirstFrame) {
-                    receivedFirstFrame = true;
+            } else {
+                // Fall back to regular JSON response
+                const data = await response.json();
+
+                setLoadingPhase(4); // Starting
+                await new Promise(resolve => setTimeout(resolve, 300));
+
+                if (data.success && data.frames && data.frames.length > 0) {
+                    const transformedSteps = data.frames.map(frame => ({
+                        lineNumber: frame.line,
+                        code: frame.code,
+                        explanation: frame.explanation,
+                        variables: frame.locals,
+                        changedVars: frame.changed_vars || [],
+                        event: frame.event,
+                        functionName: frame.function_name,
+                        output: data.output
+                    }));
+
+                    setSteps(transformedSteps);
                     setIsLoadingTrace(false);
-                  }
-                  
-                  const frame = data.frame;
-                  const transformedStep = {
-                    lineNumber: frame.line,
-                    code: frame.code,
-                    explanation: frame.explanation,
-                    variables: frame.locals,
-                    changedVars: frame.changed_vars || [],
-                    event: frame.event,
-                    functionName: frame.function_name,
-                    output: frame.output
-                  };
-                  
-                  // Add step progressively
-                  setSteps(prev => [...prev, transformedStep]);
+                } else {
+                    setError(data.error || 'Failed to trace code');
+                    setSteps([]);
+                    setShowVisualizer(false);
+                    setIsLoadingTrace(false);
                 }
-                
-                if (data.type === 'complete') {
-                  // All frames received
-                  setIsLoadingTrace(false);
-                }
-              } catch (parseError) {
-                console.error('Failed to parse SSE data:', parseError);
-              }
             }
-          }
+        } catch (err) {
+            setError(`Connection error: ${err.message}. Make sure the backend is running.`);
+            setSteps([]);
+            setShowVisualizer(false);
+            setIsLoadingTrace(false);
+        } finally {
+            setIsRunning(false);
         }
-      } else {
-        // Fall back to regular JSON response
-        const data = await response.json();
-        
-        setLoadingPhase(4); // Starting
-        await new Promise(resolve => setTimeout(resolve, 300));
-        
-        if (data.success && data.frames && data.frames.length > 0) {
-          const transformedSteps = data.frames.map(frame => ({
-            lineNumber: frame.line,
-            code: frame.code,
-            explanation: frame.explanation,
-            variables: frame.locals,
-            changedVars: frame.changed_vars || [],
-            event: frame.event,
-            functionName: frame.function_name,
-            output: data.output
-          }));
-          
-          setSteps(transformedSteps);
-          setIsLoadingTrace(false);
+    }, [code, codeMetadata]);
+
+    // Handle start visualization button click
+    const handleStartVisualization = useCallback(async () => {
+        console.log('=== START VISUALIZATION CLICKED ===');
+        console.log('Code length:', code.length);
+
+        if (!code.trim()) {
+            console.log('No code, returning');
+            return;
+        }
+
+        setError(null);
+        setLoadingPhase(0);
+
+        console.log('Detecting inputs...');
+        // First, detect if the code needs any inputs
+        const inputDetection = await detectInputs(code);
+        console.log('Input detection result:', inputDetection);
+
+        // Store metadata for later use
+        setCodeMetadata(inputDetection);
+
+        if (inputDetection.hasInputs && inputDetection.count > 0) {
+            console.log('Showing input modal');
+            // Show modal to collect inputs
+            setDetectedInputs(inputDetection.inputs);
+            setShowInputModal(true);
         } else {
-          setError(data.error || 'Failed to trace code');
-          setSteps([]);
-          setShowVisualizer(false);
-          setIsLoadingTrace(false);
+            console.log('No inputs needed, running trace directly');
+            // No inputs needed, run directly
+            runTrace([], inputDetection);
         }
-      }
-    } catch (err) {
-      setError(`Connection error: ${err.message}. Make sure the backend is running.`);
-      setSteps([]);
-      setShowVisualizer(false);
-      setIsLoadingTrace(false);
-    } finally {
-      setIsRunning(false);
-    }
-  }, [code, codeMetadata]);
+    }, [code, detectInputs, runTrace]);
 
-  // Handle start visualization button click
-  const handleStartVisualization = useCallback(async () => {
-    console.log('=== START VISUALIZATION CLICKED ===');
-    console.log('Code length:', code.length);
-    
-    if (!code.trim()) {
-      console.log('No code, returning');
-      return;
-    }
-    
-    setError(null);
-    setLoadingPhase(0);
-    
-    console.log('Detecting inputs...');
-    // First, detect if the code needs any inputs
-    const inputDetection = await detectInputs(code);
-    console.log('Input detection result:', inputDetection);
-    
-    // Store metadata for later use
-    setCodeMetadata(inputDetection);
-    
-    if (inputDetection.hasInputs && inputDetection.count > 0) {
-      console.log('Showing input modal');
-      // Show modal to collect inputs
-      setDetectedInputs(inputDetection.inputs);
-      setShowInputModal(true);
-    } else {
-      console.log('No inputs needed, running trace directly');
-      // No inputs needed, run directly
-      runTrace([], inputDetection);
-    }
-  }, [code, detectInputs, runTrace]);
+    // Handle input submission from modal
+    const handleInputSubmit = useCallback((inputValues) => {
+        runTrace(inputValues, codeMetadata);
+    }, [runTrace, codeMetadata]);
 
-  // Handle input submission from modal
-  const handleInputSubmit = useCallback((inputValues) => {
-    runTrace(inputValues, codeMetadata);
-  }, [runTrace, codeMetadata]);
+    const handleCloseVisualizer = useCallback(() => {
+        setShowVisualizer(false);
+        setSteps([]);
+        setIsLoadingTrace(false);
+    }, []);
 
-  const handleCloseVisualizer = useCallback(() => {
-    setShowVisualizer(false);
-    setSteps([]);
-    setIsLoadingTrace(false);
-  }, []);
+    const handleUploadExample = useCallback(() => {
+        setCode(exampleCode);
+        setSteps([]);
+        setError(null);
+        setCodeMetadata(null);
+        setShowVisualizer(false);
+    }, []);
 
-  const handleUploadExample = useCallback(() => {
-    setCode(exampleCode);
-    setSteps([]);
-    setError(null);
-    setCodeMetadata(null);
-    setShowVisualizer(false);
-  }, []);
+    // Get code lines for the visualizer
+    const codeLines = code.split('\n');
 
-  // Get code lines for the visualizer
-  const codeLines = code.split('\n');
+    return (
+        <div className="h-screen flex flex-col overflow-hidden bg-gradient-to-br from-slate-950 to-slate-900">
+            <TopBar onUploadExample={handleUploadExample} />
 
-  return (
-    <div className="h-screen flex flex-col overflow-hidden bg-gradient-to-br from-slate-950 to-slate-900">
-      <TopBar onUploadExample={handleUploadExample} />
-      
-      <main className="flex-1 flex items-center justify-center p-4 overflow-hidden min-h-0">
-        {/* Centered Code Editor */}
-        <div className="w-full max-w-3xl h-full">
-          <CodeEditor
-            code={code}
-            setCode={setCode}
-            onStartVisualization={handleStartVisualization}
-            autoGenerateInput={autoGenerateInput}
-            setAutoGenerateInput={setAutoGenerateInput}
-            isRunning={isRunning}
-            currentLine={null}
-            error={error}
-            isVisualizationActive={false}
-          />
+            <main className="flex-1 flex items-center justify-center p-4 overflow-hidden min-h-0">
+                {/* Centered Code Editor */}
+                <div className="w-full max-w-3xl h-full">
+                    <CodeEditor
+                        code={code}
+                        setCode={setCode}
+                        onStartVisualization={handleStartVisualization}
+                        autoGenerateInput={autoGenerateInput}
+                        setAutoGenerateInput={setAutoGenerateInput}
+                        isRunning={isRunning}
+                        currentLine={null}
+                        error={error}
+                        isVisualizationActive={false}
+                    />
+                </div>
+            </main>
+
+            {/* Input Modal */}
+            <InputModal
+                isOpen={showInputModal}
+                onClose={() => setShowInputModal(false)}
+                inputs={detectedInputs}
+                onSubmit={handleInputSubmit}
+                codeType={codeMetadata?.codeType}
+                functionName={codeMetadata?.functionName}
+                className={codeMetadata?.className}
+            />
+
+            {/* Immersive Full-Screen Visualizer */}
+            <ImmersiveVisualizer
+                isOpen={showVisualizer}
+                onClose={handleCloseVisualizer}
+                steps={steps}
+                code={code}
+                codeLines={codeLines}
+                isLoading={isLoadingTrace}
+                loadingPhase={loadingPhase}
+                isGenerating={isRunning}
+            />
         </div>
-      </main>
-
-      {/* Input Modal */}
-      <InputModal
-        isOpen={showInputModal}
-        onClose={() => setShowInputModal(false)}
-        inputs={detectedInputs}
-        onSubmit={handleInputSubmit}
-        codeType={codeMetadata?.codeType}
-        functionName={codeMetadata?.functionName}
-        className={codeMetadata?.className}
-      />
-      
-      {/* Immersive Full-Screen Visualizer */}
-      <ImmersiveVisualizer
-        isOpen={showVisualizer}
-        onClose={handleCloseVisualizer}
-        steps={steps}
-        code={code}
-        codeLines={codeLines}
-        isLoading={isLoadingTrace}
-        loadingPhase={loadingPhase}
-      />
-    </div>
-  );
+    );
 }
 
 export default App;
