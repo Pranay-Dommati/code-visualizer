@@ -1,13 +1,14 @@
 import React, { useState, useEffect } from 'react';
-import { Stage, Layer, Circle, Line, Text, Group } from 'react-konva';
+import { Stage, Layer, Circle, Rect, Line, Text, Group } from 'react-konva';
 import LiveKitConnection from '../services/LiveKitConnection';
 import { canvasStateManager } from '../services/CanvasStateManager';
 import { commandProcessor } from '../services/CommandProcessor';
 
-const VisualExplanationPanel = () => {
+const VisualExplanationPanel = ({ width, height, code, steps, codeLines }) => {
     const [isConnected, setIsConnected] = useState(false);
     const [isSpeaking, setIsSpeaking] = useState(false);
     const [status, setStatus] = useState('Disconnected');
+    const [contextSent, setContextSent] = useState(false);
     const [nodes, setNodes] = useState([]);
     const [edges, setEdges] = useState([]);
     const [textInput, setTextInput] = useState('');
@@ -21,8 +22,53 @@ const VisualExplanationPanel = () => {
         return () => unsubscribe();
     }, []);
 
+    // Send context to backend API (not via LiveKit)
+    const sendContextToBackend = async () => {
+        if (!code && (!steps || steps.length === 0)) {
+            console.log('📋 No context to send');
+            return false;
+        }
+        
+        try {
+            const response = await fetch('http://localhost:5000/api/teacher/context', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    code: code || '',
+                    codeLines: codeLines || [],
+                    steps: steps || []
+                })
+            });
+            
+            if (response.ok) {
+                const data = await response.json();
+                console.log('✅ Context sent to backend:', data);
+                setContextSent(true);
+                return true;
+            } else {
+                console.error('Failed to send context:', response.status);
+                return false;
+            }
+        } catch (error) {
+            console.error('Error sending context to backend:', error);
+            return false;
+        }
+    };
+
+    // Send context to backend whenever code/steps change
+    useEffect(() => {
+        if (code || (steps && steps.length > 0)) {
+            sendContextToBackend();
+        }
+    }, [code, steps, codeLines]);
+
     const handleConnect = async () => {
         try {
+            setStatus('Sending context...');
+            
+            // First, ensure context is sent to backend
+            await sendContextToBackend();
+            
             setStatus('Connecting...');
 
             // Get token from backend
@@ -37,11 +83,13 @@ const VisualExplanationPanel = () => {
                 data.token,
                 data.url,
                 (command) => {
-                    // Handle drawing commands
+                    // Handle drawing commands from the AI Teacher
+                    console.log('📥 Received drawing command:', command);
                     commandProcessor.process(command);
                 },
                 (state) => {
                     // Handle connection state
+                    console.log('🔌 Connection state:', state);
                     setStatus(`Status: ${state}`);
                     setIsConnected(state === 'connected');
                 }
@@ -71,6 +119,101 @@ const VisualExplanationPanel = () => {
         await LiveKitConnection.sendText(textInput);
         setTextInput('');
     };
+
+    // Render node based on type
+    const renderNode = (node) => {
+        const nodeType = node.type || 'circle';
+        const fillColor = node.highlight ? '#8B5CF6' : '#1F2937';
+        const strokeColor = node.highlight ? '#C4B5FD' : '#4B5563';
+
+        if (nodeType === 'rect') {
+            return (
+                <Group key={node.id} x={node.x} y={node.y} draggable>
+                    <Rect
+                        width={50}
+                        height={40}
+                        fill={fillColor}
+                        stroke={strokeColor}
+                        strokeWidth={2}
+                        cornerRadius={4}
+                        shadowColor="black"
+                        shadowBlur={10}
+                        shadowOpacity={0.3}
+                        offsetX={25}
+                        offsetY={20}
+                    />
+                    <Text
+                        text={String(node.value)}
+                        fontSize={16}
+                        fill="white"
+                        align="center"
+                        verticalAlign="middle"
+                        width={50}
+                        height={40}
+                        offsetX={25}
+                        offsetY={20}
+                        fontFamily="monospace"
+                        fontStyle="bold"
+                    />
+                </Group>
+            );
+        } else if (nodeType === 'pointer') {
+            return (
+                <Group key={node.id} x={node.x} y={node.y}>
+                    {/* Pointer arrow */}
+                    <Line
+                        points={[0, 0, 0, 25]}
+                        stroke="#10B981"
+                        strokeWidth={2}
+                    />
+                    <Line
+                        points={[-5, 20, 0, 25, 5, 20]}
+                        stroke="#10B981"
+                        strokeWidth={2}
+                    />
+                    <Text
+                        text={String(node.value)}
+                        fontSize={12}
+                        fill="#10B981"
+                        align="center"
+                        offsetX={10}
+                        offsetY={15}
+                        fontFamily="monospace"
+                        fontStyle="bold"
+                    />
+                </Group>
+            );
+        }
+
+        // Default circle
+        return (
+            <Group key={node.id} x={node.x} y={node.y} draggable>
+                <Circle
+                    radius={30}
+                    fill={fillColor}
+                    stroke={strokeColor}
+                    strokeWidth={2}
+                    shadowColor="black"
+                    shadowBlur={10}
+                    shadowOpacity={0.3}
+                />
+                <Text
+                    text={String(node.value)}
+                    fontSize={16}
+                    fill="white"
+                    align="center"
+                    verticalAlign="middle"
+                    offsetX={10}
+                    offsetY={8}
+                    fontFamily="monospace"
+                    fontStyle="bold"
+                />
+            </Group>
+        );
+    };
+
+    const canvasWidth = width || 800;
+    const canvasHeight = height ? height - 200 : 400;
 
     return (
         <div className="flex flex-col h-full bg-gray-900 text-white p-4 rounded-lg shadow-xl">
@@ -107,11 +250,17 @@ const VisualExplanationPanel = () => {
 
             <div className="mb-2 text-sm text-gray-400 font-mono">
                 {status}
+                {contextSent && (
+                    <span className="ml-2 text-green-400">✓ Code context sent</span>
+                )}
+                {!contextSent && isConnected && code && (
+                    <span className="ml-2 text-yellow-400">⏳ Sending context...</span>
+                )}
             </div>
 
             {/* Visualization Canvas */}
             <div className="flex-grow bg-gray-800 rounded-lg overflow-hidden border border-gray-700 relative">
-                <Stage width={800} height={500}>
+                <Stage width={canvasWidth - 40} height={canvasHeight}>
                     <Layer>
                         {/* Edges */}
                         {edges.map((edge, i) => {
@@ -129,30 +278,7 @@ const VisualExplanationPanel = () => {
                         })}
 
                         {/* Nodes */}
-                        {nodes.map((node) => (
-                            <Group key={node.id} x={node.x} y={node.y} draggable>
-                                <Circle
-                                    radius={30}
-                                    fill={node.highlight ? '#8B5CF6' : '#1F2937'}
-                                    stroke={node.highlight ? '#C4B5FD' : '#4B5563'}
-                                    strokeWidth={2}
-                                    shadowColor="black"
-                                    shadowBlur={10}
-                                    shadowOpacity={0.3}
-                                />
-                                <Text
-                                    text={node.value}
-                                    fontSize={16}
-                                    fill="white"
-                                    align="center"
-                                    verticalAlign="middle"
-                                    offsetX={10}
-                                    offsetY={8}
-                                    fontFamily="monospace"
-                                    fontStyle="bold"
-                                />
-                            </Group>
-                        ))}
+                        {nodes.map((node) => renderNode(node))}
                     </Layer>
                 </Stage>
 

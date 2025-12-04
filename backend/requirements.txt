@@ -4,3 +4,7 @@ websockets
 google-auth
 google-auth-oauthlib
 python-dotenv
+aiohttp
+livekit
+livekit-agents
+livekit-plugins-google

@@ -783,7 +783,13 @@ const ImmersiveVisualizer = ({
                     {/* Visual Explanation Tab */}
                     {leftPanelTab === 'visual' && (
                         <div className="flex-1 bg-slate-900 relative">
-                            <VisualExplanationPanel width={sidebarWidth} height={window.innerHeight - 150} />
+                            <VisualExplanationPanel 
+                                width={sidebarWidth} 
+                                height={window.innerHeight - 150}
+                                code={code}
+                                steps={steps}
+                                codeLines={codeLines}
+                            />
                         </div>
                     )}
                 </div>

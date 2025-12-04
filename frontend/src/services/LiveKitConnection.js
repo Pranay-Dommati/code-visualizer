@@ -6,6 +6,7 @@ class LiveKitConnection {
         this.audioElement = null;
         this.onDrawingCommand = null;
         this.onConnectionStateChange = null;
+        this.pendingContext = null; // Store context to send after connection
     }
 
     async connect(token, url, onDrawingCommand, onConnectionStateChange) {
@@ -19,8 +20,18 @@ class LiveKitConnection {
 
         // Handle connection state changes
         this.room.on(RoomEvent.ConnectionStateChanged, (state) => {
+            console.log('🔌 Connection state changed:', state);
             if (this.onConnectionStateChange) {
                 this.onConnectionStateChange(state);
+            }
+            
+            // Send pending context once connected (with a small delay to ensure stability)
+            if (state === 'connected' && this.pendingContext) {
+                setTimeout(() => {
+                    console.log('📤 Sending pending context after connection...');
+                    this.sendContext(this.pendingContext);
+                    this.pendingContext = null;
+                }, 1000); // 1 second delay to let the agent fully initialize
             }
         });
 
@@ -36,6 +47,7 @@ class LiveKitConnection {
             const strData = new TextDecoder().decode(payload);
             try {
                 const command = JSON.parse(strData);
+                console.log('📥 Received drawing command:', command);
                 if (this.onDrawingCommand) {
                     this.onDrawingCommand(command);
                 }
@@ -98,6 +110,46 @@ class LiveKitConnection {
         }
     }
 
+    /**
+     * Send code execution context to the AI Teacher agent
+     * @param {Object} context - The context object containing code, steps, codeLines, variables
+     */
+    async sendContext(context) {
+        if (!this.room || !this.room.localParticipant) {
+            // Store context to send later when connected
+            this.pendingContext = context;
+            console.log('📋 Context queued for sending after connection');
+            return;
+        }
+
+        const contextData = {
+            type: "context_update",
+            code: context.code || "",
+            steps: context.steps || [],
+            codeLines: context.codeLines || [],
+            variables: context.variables || {}
+        };
+
+        const strData = JSON.stringify(contextData);
+        const data = new TextEncoder().encode(strData);
+
+        try {
+            // Use DataPacket_Kind.RELIABLE for reliable delivery
+            await this.room.localParticipant.publishData(data, { reliable: true });
+            console.log('📤 Sent code execution context to AI Teacher, data size:', strData.length);
+        } catch (error) {
+            console.error("Failed to send context data:", error);
+        }
+    }
+
+    /**
+     * Set context before connecting - will be sent automatically after connection
+     * @param {Object} context - The context object
+     */
+    setContext(context) {
+        this.pendingContext = context;
+    }
+
     disconnect() {
         if (this.room) {
             this.room.disconnect();
@@ -107,6 +159,7 @@ class LiveKitConnection {
             this.audioElement.remove();
             this.audioElement = null;
         }
+        this.pendingContext = null;
     }
 }
 

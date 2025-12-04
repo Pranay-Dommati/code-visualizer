@@ -359,6 +359,15 @@ async def validate_code_endpoint(request: DetectRequest):
 
 # ============ AI Teacher REST Endpoints (Restored) ============
 
+# Global context storage - the backend is the source of truth
+_teacher_context = {
+    "code": "",
+    "codeLines": [],
+    "steps": [],
+    "variables": {},
+    "updated_at": None
+}
+
 class ContextRequest(BaseModel):
     code: str
     codeLines: List[str] = []
@@ -370,11 +379,31 @@ class ChatRequest(BaseModel):
 
 @app.post("/api/teacher/context")
 async def teacher_set_context(request: ContextRequest):
-    """Set the code execution context for AI Teacher."""
-    # In the WebSocket version, context is usually sent via WS, 
-    # but we keep this for compatibility if the frontend calls it.
-    print(f"✓ Context received: {len(request.steps)} steps")
-    return {"success": True, "message": "Context set successfully"}
+    """Set the code execution context for AI Teacher - stored in backend."""
+    global _teacher_context
+    import datetime
+    
+    _teacher_context["code"] = request.code
+    _teacher_context["codeLines"] = request.codeLines
+    _teacher_context["steps"] = request.steps
+    _teacher_context["updated_at"] = datetime.datetime.now().isoformat()
+    
+    print(f"✅ Context stored in backend: {len(request.steps)} steps, {len(request.code)} chars of code")
+    return {
+        "success": True, 
+        "message": "Context stored successfully",
+        "steps_count": len(request.steps),
+        "code_length": len(request.code)
+    }
+
+@app.get("/api/teacher/context")
+async def teacher_get_context():
+    """Get the current code execution context - called by the LiveKit Agent."""
+    global _teacher_context
+    return {
+        "success": True,
+        "context": _teacher_context
+    }
 
 @app.post("/api/teacher/chat")
 async def teacher_chat(request: ChatRequest):
