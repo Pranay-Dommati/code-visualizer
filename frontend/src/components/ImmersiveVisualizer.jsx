@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
-import VisualExplanationPanel from './VisualExplanationPanel';
+import VisualExplanationPanelV2 from './VisualExplanationPanelV2';
 
 const API_BASE_URL = 'http://localhost:5000/api';
 
@@ -783,7 +783,7 @@ const ImmersiveVisualizer = ({
                     {/* Visual Explanation Tab */}
                     {leftPanelTab === 'visual' && (
                         <div className="flex-1 bg-slate-900 relative">
-                            <VisualExplanationPanel 
+                            <VisualExplanationPanelV2 
                                 width={sidebarWidth} 
                                 height={window.innerHeight - 150}
                                 code={code}

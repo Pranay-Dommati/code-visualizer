@@ -59,6 +59,22 @@ class CommandProcessor {
             case 'animate_swap':
                 this.animateSwap(command);
                 break;
+            
+            case 'move_pointer':
+                this.movePointer(command);
+                break;
+            
+            case 'pulse_element':
+                this.pulseElement(command);
+                break;
+            
+            case 'show_message':
+                this.showMessage(command);
+                break;
+            
+            case 'highlight_code_line':
+                this.highlightCodeLine(command);
+                break;
                 
             case 'update_node':
                 canvasStateManager.updateNode(command.id, {
@@ -265,17 +281,112 @@ class CommandProcessor {
     }
     
     animateSwap(command) {
-        const { array_id, index1, index2 } = command;
+        const { array_id, index1, index2, duration = 500 } = command;
         
         // Get current values
-        const node1 = `${array_id}_${index1}`;
-        const node2 = `${array_id}_${index2}`;
+        const node1Id = `${array_id}_${index1}`;
+        const node2Id = `${array_id}_${index2}`;
         
         // Highlight both nodes being swapped
-        canvasStateManager.updateNode(node1, { highlight: true, color: 'red' });
-        canvasStateManager.updateNode(node2, { highlight: true, color: 'red' });
+        canvasStateManager.updateNode(node1Id, { highlight: true, color: 'purple' });
+        canvasStateManager.updateNode(node2Id, { highlight: true, color: 'purple' });
+        
+        // Get positions
+        const arrayPos = this.arrayPositions.get(array_id);
+        if (arrayPos) {
+            const nodeWidth = arrayPos.nodeWidth;
+            const nodeGap = arrayPos.nodeGap;
+            const baseX = arrayPos.x;
+            const baseY = arrayPos.y;
+            
+            // Swap positions with animation delay
+            setTimeout(() => {
+                canvasStateManager.updateNode(node1Id, { 
+                    x: baseX + index2 * (nodeWidth + nodeGap),
+                    highlight: true, 
+                    color: 'green' 
+                });
+                canvasStateManager.updateNode(node2Id, { 
+                    x: baseX + index1 * (nodeWidth + nodeGap),
+                    highlight: true, 
+                    color: 'green' 
+                });
+            }, duration / 2);
+            
+            // Clear highlight after animation
+            setTimeout(() => {
+                canvasStateManager.updateNode(node1Id, { highlight: false });
+                canvasStateManager.updateNode(node2Id, { highlight: false });
+            }, duration);
+        }
         
         console.log(`🔄 Animating swap in "${array_id}": index ${index1} ↔ ${index2}`);
+    }
+    
+    // Animate pointer movement
+    movePointer(command) {
+        const { id, targetId, newIndex, duration = 300 } = command;
+        const pointerId = `ptr_${id}`;
+        
+        const arrayPos = this.arrayPositions.get(targetId);
+        if (arrayPos) {
+            const nodeWidth = arrayPos.nodeWidth;
+            const nodeGap = arrayPos.nodeGap;
+            const newX = arrayPos.x + newIndex * (nodeWidth + nodeGap);
+            const newY = arrayPos.y - 50;
+            
+            canvasStateManager.updateNode(pointerId, { 
+                x: newX, 
+                y: newY,
+                targetIndex: newIndex 
+            });
+            
+            console.log(`👆 Moving pointer "${id}" to index ${newIndex}`);
+        }
+    }
+    
+    // Pulse/flash an element for emphasis
+    pulseElement(command) {
+        const { id, color = 'yellow', duration = 400 } = command;
+        
+        canvasStateManager.updateNode(id, { highlight: true, color });
+        
+        setTimeout(() => {
+            canvasStateManager.updateNode(id, { highlight: false });
+        }, duration);
+        
+        console.log(`✨ Pulsing element "${id}"`);
+    }
+    
+    // Show a temporary message/annotation
+    showMessage(command) {
+        const { id, text, x, y, color = '#22c55e', duration = 3000 } = command;
+        const msgId = `msg_${id || Date.now()}`;
+        
+        canvasStateManager.addNode({
+            id: msgId,
+            x, y,
+            value: text,
+            type: 'label',
+            color,
+            highlight: true
+        });
+        
+        // Auto-remove after duration
+        if (duration > 0) {
+            setTimeout(() => {
+                canvasStateManager.deleteNode(msgId);
+            }, duration);
+        }
+        
+        console.log(`💬 Showing message: "${text}"`);
+    }
+    
+    // Highlight a code line (for future integration)
+    highlightCodeLine(command) {
+        const { lineNumber } = command;
+        console.log(`📍 Highlight code line ${lineNumber}`);
+        // This could emit an event to highlight source code
     }
 }
 

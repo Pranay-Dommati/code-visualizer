@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { Stage, Layer, Circle, Rect, Line, Text, Group } from 'react-konva';
 import LiveKitConnection from '../services/LiveKitConnection';
 import { canvasStateManager } from '../services/CanvasStateManager';
 import { commandProcessor } from '../services/CommandProcessor';
+import AnimatedCanvas from './AnimatedCanvas';
 
 const VisualExplanationPanel = ({ width, height, code, steps, codeLines }) => {
     const [isConnected, setIsConnected] = useState(false);
@@ -10,14 +10,13 @@ const VisualExplanationPanel = ({ width, height, code, steps, codeLines }) => {
     const [status, setStatus] = useState('Disconnected');
     const [contextSent, setContextSent] = useState(false);
     const [nodes, setNodes] = useState([]);
-    const [edges, setEdges] = useState([]);
     const [textInput, setTextInput] = useState('');
+    const [timelineInfo, setTimelineInfo] = useState({ current: 0, total: 0 });
 
     // Subscribe to canvas state changes
     useEffect(() => {
         const unsubscribe = canvasStateManager.subscribe((state) => {
             setNodes(state.nodes);
-            setEdges(state.edges);
         });
         return () => unsubscribe();
     }, []);
@@ -44,6 +43,10 @@ const VisualExplanationPanel = ({ width, height, code, steps, codeLines }) => {
                 const data = await response.json();
                 console.log('✅ Context sent to backend:', data);
                 setContextSent(true);
+                // Update timeline info
+                if (data.timeline_steps) {
+                    setTimelineInfo({ current: 0, total: data.timeline_steps });
+                }
                 return true;
             } else {
                 console.error('Failed to send context:', response.status);
@@ -120,201 +123,6 @@ const VisualExplanationPanel = ({ width, height, code, steps, codeLines }) => {
         setTextInput('');
     };
 
-    // Render node based on type
-    const renderNode = (node) => {
-        const nodeType = node.type || 'circle';
-        
-        // Color mapping for highlights
-        const colorMap = {
-            'yellow': { fill: '#FCD34D', stroke: '#F59E0B' },
-            'green': { fill: '#34D399', stroke: '#10B981' },
-            'red': { fill: '#F87171', stroke: '#EF4444' },
-            'blue': { fill: '#60A5FA', stroke: '#3B82F6' },
-            'purple': { fill: '#A78BFA', stroke: '#8B5CF6' },
-            'orange': { fill: '#FB923C', stroke: '#F97316' },
-        };
-        
-        const highlightColor = node.color && colorMap[node.color] ? colorMap[node.color] : colorMap['purple'];
-        const fillColor = node.highlight ? highlightColor.fill : '#1F2937';
-        const strokeColor = node.highlight ? highlightColor.stroke : '#4B5563';
-
-        if (nodeType === 'rect') {
-            return (
-                <Group key={node.id} x={node.x} y={node.y} draggable>
-                    <Rect
-                        width={50}
-                        height={40}
-                        fill={fillColor}
-                        stroke={strokeColor}
-                        strokeWidth={2}
-                        cornerRadius={4}
-                        shadowColor="black"
-                        shadowBlur={10}
-                        shadowOpacity={0.3}
-                        offsetX={25}
-                        offsetY={20}
-                    />
-                    <Text
-                        text={String(node.value)}
-                        fontSize={16}
-                        fill={node.highlight ? '#1F2937' : 'white'}
-                        align="center"
-                        verticalAlign="middle"
-                        width={50}
-                        height={40}
-                        offsetX={25}
-                        offsetY={20}
-                        fontFamily="monospace"
-                        fontStyle="bold"
-                    />
-                </Group>
-            );
-        } else if (nodeType === 'pointer') {
-            return (
-                <Group key={node.id} x={node.x} y={node.y}>
-                    {/* Pointer arrow */}
-                    <Line
-                        points={[0, 0, 0, 30]}
-                        stroke="#10B981"
-                        strokeWidth={3}
-                    />
-                    <Line
-                        points={[-8, 22, 0, 30, 8, 22]}
-                        stroke="#10B981"
-                        strokeWidth={3}
-                        lineCap="round"
-                        lineJoin="round"
-                    />
-                    <Text
-                        text={String(node.value)}
-                        fontSize={14}
-                        fill="#10B981"
-                        align="center"
-                        offsetX={15}
-                        offsetY={18}
-                        fontFamily="monospace"
-                        fontStyle="bold"
-                    />
-                </Group>
-            );
-        } else if (nodeType === 'index') {
-            return (
-                <Group key={node.id} x={node.x} y={node.y}>
-                    <Text
-                        text={String(node.value)}
-                        fontSize={12}
-                        fill="#6B7280"
-                        align="center"
-                        fontFamily="monospace"
-                    />
-                </Group>
-            );
-        } else if (nodeType === 'label') {
-            return (
-                <Group key={node.id} x={node.x} y={node.y}>
-                    <Text
-                        text={String(node.value)}
-                        fontSize={14}
-                        fill={node.color || '#9CA3AF'}
-                        fontFamily="monospace"
-                        fontStyle="bold"
-                    />
-                </Group>
-            );
-        } else if (nodeType === 'variable') {
-            return (
-                <Group key={node.id} x={node.x} y={node.y}>
-                    <Rect
-                        width={Math.max(120, String(node.value).length * 10)}
-                        height={32}
-                        fill={node.highlight ? '#1E40AF' : '#1F2937'}
-                        stroke={node.highlight ? '#3B82F6' : '#4B5563'}
-                        strokeWidth={2}
-                        cornerRadius={6}
-                    />
-                    <Text
-                        text={String(node.value)}
-                        fontSize={14}
-                        fill="white"
-                        x={10}
-                        y={8}
-                        fontFamily="monospace"
-                    />
-                </Group>
-            );
-        } else if (nodeType === 'comparison') {
-            return (
-                <Group key={node.id} x={node.x} y={node.y}>
-                    <Rect
-                        width={Math.max(180, String(node.value).length * 10)}
-                        height={36}
-                        fill={node.highlight ? '#065F46' : '#1F2937'}
-                        stroke={node.highlight ? '#10B981' : '#4B5563'}
-                        strokeWidth={2}
-                        cornerRadius={8}
-                    />
-                    <Text
-                        text={String(node.value)}
-                        fontSize={14}
-                        fill={node.highlight ? '#A7F3D0' : '#9CA3AF'}
-                        x={12}
-                        y={10}
-                        fontFamily="monospace"
-                        fontStyle="bold"
-                    />
-                </Group>
-            );
-        } else if (nodeType === 'loop') {
-            return (
-                <Group key={node.id} x={node.x} y={node.y}>
-                    <Rect
-                        width={120}
-                        height={30}
-                        fill="#7C3AED"
-                        stroke="#A78BFA"
-                        strokeWidth={2}
-                        cornerRadius={15}
-                    />
-                    <Text
-                        text={String(node.value)}
-                        fontSize={12}
-                        fill="white"
-                        x={10}
-                        y={8}
-                        fontFamily="monospace"
-                        fontStyle="bold"
-                    />
-                </Group>
-            );
-        }
-
-        // Default circle
-        return (
-            <Group key={node.id} x={node.x} y={node.y} draggable>
-                <Circle
-                    radius={30}
-                    fill={fillColor}
-                    stroke={strokeColor}
-                    strokeWidth={2}
-                    shadowColor="black"
-                    shadowBlur={10}
-                    shadowOpacity={0.3}
-                />
-                <Text
-                    text={String(node.value)}
-                    fontSize={16}
-                    fill={node.highlight ? '#1F2937' : 'white'}
-                    align="center"
-                    verticalAlign="middle"
-                    offsetX={10}
-                    offsetY={8}
-                    fontFamily="monospace"
-                    fontStyle="bold"
-                />
-            </Group>
-        );
-    };
-
     const canvasWidth = width || 800;
     const canvasHeight = height ? height - 200 : 400;
 
@@ -359,35 +167,56 @@ const VisualExplanationPanel = ({ width, height, code, steps, codeLines }) => {
                 {!contextSent && isConnected && code && (
                     <span className="ml-2 text-yellow-400">⏳ Sending context...</span>
                 )}
+                {timelineInfo.total > 0 && (
+                    <span className="ml-2 text-blue-400">📋 {timelineInfo.total} teaching steps ready</span>
+                )}
             </div>
 
-            {/* Visualization Canvas */}
-            <div className="flex-grow bg-gray-800 rounded-lg overflow-hidden border border-gray-700 relative">
-                <Stage width={canvasWidth - 40} height={canvasHeight}>
-                    <Layer>
-                        {/* Edges */}
-                        {edges.map((edge, i) => {
-                            const fromNode = nodes.find(n => n.id === edge.from);
-                            const toNode = nodes.find(n => n.id === edge.to);
-                            if (!fromNode || !toNode) return null;
-                            return (
-                                <Line
-                                    key={i}
-                                    points={[fromNode.x, fromNode.y, toNode.x, toNode.y]}
-                                    stroke="#4B5563"
-                                    strokeWidth={2}
-                                />
-                            );
-                        })}
+            {/* Quick Action Buttons */}
+            {isConnected && timelineInfo.total > 0 && (
+                <div className="mb-3 flex gap-2 flex-wrap">
+                    <button
+                        onClick={() => setTextInput("Show me everything")}
+                        className="px-3 py-1.5 bg-purple-600 hover:bg-purple-700 rounded-lg text-sm font-medium transition-all"
+                    >
+                        🎬 Full Walkthrough
+                    </button>
+                    <button
+                        onClick={() => setTextInput("Show step 1")}
+                        className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 rounded-lg text-sm font-medium transition-all"
+                    >
+                        1️⃣ Step 1
+                    </button>
+                    <button
+                        onClick={() => setTextInput("Next")}
+                        className="px-3 py-1.5 bg-green-600 hover:bg-green-700 rounded-lg text-sm font-medium transition-all"
+                    >
+                        ▶️ Next
+                    </button>
+                    <button
+                        onClick={() => setTextInput("Previous")}
+                        className="px-3 py-1.5 bg-gray-600 hover:bg-gray-700 rounded-lg text-sm font-medium transition-all"
+                    >
+                        ◀️ Previous
+                    </button>
+                </div>
+            )}
 
-                        {/* Nodes */}
-                        {nodes.map((node) => renderNode(node))}
-                    </Layer>
-                </Stage>
+            {/* Visualization Canvas - Animated Game-like Experience */}
+            <div className="flex-grow bg-gray-800 rounded-lg overflow-hidden border border-gray-700 relative">
+                <AnimatedCanvas 
+                    width={canvasWidth - 40} 
+                    height={canvasHeight}
+                    nodes={nodes}
+                />
 
                 {nodes.length === 0 && (
                     <div className="absolute inset-0 flex items-center justify-center text-gray-500 pointer-events-none">
-                        <p>AI visualizations will appear here...</p>
+                        <div className="text-center">
+                            <div className="text-4xl mb-2">🎨</div>
+                            <p>Ask the AI to visualize something!</p>
+                            <p className="text-sm text-gray-600 mt-1">Try: "Show me step 1" or "Visualize the array"</p>
+                        </div>
                     </div>
                 )}
             </div>

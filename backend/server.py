@@ -359,13 +359,24 @@ async def validate_code_endpoint(request: DetectRequest):
 
 # ============ AI Teacher REST Endpoints (Restored) ============
 
+# Import Visual Scene Generator (uses tracer data directly like the left panel)
+from visual_scene_generator import generate_visual_timeline, visual_scene_generator
+# Also keep semantic scene engine for compatibility
+from scene_engine import SemanticSceneEngine, scene_engine
+# NEW: Cinematic transition generator (state transitions, not scenes!)
+from cinematic_transitions import generate_cinematic_transitions
+
 # Global context storage - the backend is the source of truth
 _teacher_context = {
     "code": "",
     "codeLines": [],
     "steps": [],
     "variables": {},
-    "updated_at": None
+    "updated_at": None,
+    "timeline": [],  # Generated timeline for synchronized teaching
+    "visual_timeline": [],  # Visual steps that mirror tracer data
+    "cinematic_transitions": [],  # NEW: State transition commands for smooth animation
+    "current_timeline_step": 0
 }
 
 class ContextRequest(BaseModel):
@@ -388,11 +399,27 @@ async def teacher_set_context(request: ContextRequest):
     _teacher_context["steps"] = request.steps
     _teacher_context["updated_at"] = datetime.datetime.now().isoformat()
     
-    print(f"✅ Context stored in backend: {len(request.steps)} steps, {len(request.code)} chars of code")
+    # Generate CINEMATIC TRANSITIONS (state deltas, not full scenes!)
+    cinematic = generate_cinematic_transitions(request.code, request.steps)
+    _teacher_context["cinematic_transitions"] = cinematic
+    
+    # Also generate visual timeline for fallback
+    visual_timeline = generate_visual_timeline(request.code, request.steps)
+    _teacher_context["visual_timeline"] = visual_timeline
+    
+    # Also generate semantic timeline for speech
+    timeline = scene_engine.generate_timeline(request.code, request.steps)
+    _teacher_context["timeline"] = scene_engine.get_all_steps()
+    _teacher_context["current_timeline_step"] = 0
+    
+    print(f"✅ Context: {len(request.steps)} tracer → {len(cinematic)} transitions, {len(visual_timeline)} visual")
     return {
         "success": True, 
-        "message": "Context stored successfully",
+        "message": "Context stored with cinematic transitions",
         "steps_count": len(request.steps),
+        "cinematic_transitions": len(cinematic),
+        "visual_steps": len(visual_timeline),
+        "timeline_steps": len(_teacher_context["timeline"]),
         "code_length": len(request.code)
     }
 
@@ -404,6 +431,132 @@ async def teacher_get_context():
         "success": True,
         "context": _teacher_context
     }
+
+# ============ Timeline Navigation Endpoints ============
+
+@app.get("/api/teacher/timeline")
+async def get_timeline():
+    """Get the full teaching timeline."""
+    global _teacher_context
+    return {
+        "success": True,
+        "timeline": _teacher_context.get("timeline", []),
+        "current_step": _teacher_context.get("current_timeline_step", 0),
+        "total_steps": len(_teacher_context.get("timeline", []))
+    }
+
+@app.get("/api/teacher/timeline/current")
+async def get_current_timeline_step():
+    """Get the current timeline step with speech script and visualization commands."""
+    global _teacher_context
+    timeline = _teacher_context.get("timeline", [])
+    current_idx = _teacher_context.get("current_timeline_step", 0)
+    
+    if not timeline or current_idx >= len(timeline):
+        return {"success": False, "error": "No timeline available"}
+    
+    step = timeline[current_idx]
+    return {
+        "success": True,
+        "step": step,
+        "progress": {
+            "current": current_idx,
+            "total": len(timeline),
+            "percent": (current_idx / max(1, len(timeline) - 1)) * 100
+        }
+    }
+
+@app.post("/api/teacher/timeline/next")
+async def next_timeline_step():
+    """Advance to the next timeline step."""
+    global _teacher_context
+    timeline = _teacher_context.get("timeline", [])
+    current_idx = _teacher_context.get("current_timeline_step", 0)
+    
+    if current_idx < len(timeline) - 1:
+        _teacher_context["current_timeline_step"] = current_idx + 1
+        step = timeline[current_idx + 1]
+        return {
+            "success": True,
+            "step": step,
+            "progress": {
+                "current": current_idx + 1,
+                "total": len(timeline)
+            }
+        }
+    return {"success": False, "error": "Already at last step"}
+
+@app.post("/api/teacher/timeline/previous")
+async def previous_timeline_step():
+    """Go back to the previous timeline step."""
+    global _teacher_context
+    timeline = _teacher_context.get("timeline", [])
+    current_idx = _teacher_context.get("current_timeline_step", 0)
+    
+    if current_idx > 0:
+        _teacher_context["current_timeline_step"] = current_idx - 1
+        step = timeline[current_idx - 1]
+        return {
+            "success": True,
+            "step": step,
+            "progress": {
+                "current": current_idx - 1,
+                "total": len(timeline)
+            }
+        }
+    return {"success": False, "error": "Already at first step"}
+
+@app.post("/api/teacher/timeline/goto/{step_number}")
+async def goto_timeline_step(step_number: int):
+    """Jump to a specific timeline step."""
+    global _teacher_context
+    timeline = _teacher_context.get("timeline", [])
+    
+    if 0 <= step_number < len(timeline):
+        _teacher_context["current_timeline_step"] = step_number
+        step = timeline[step_number]
+        return {
+            "success": True,
+            "step": step,
+            "progress": {
+                "current": step_number,
+                "total": len(timeline)
+            }
+        }
+    return {"success": False, "error": f"Invalid step number: {step_number}"}
+
+@app.post("/api/teacher/timeline/reset")
+async def reset_timeline():
+    """Reset timeline to the beginning."""
+    global _teacher_context
+    _teacher_context["current_timeline_step"] = 0
+    timeline = _teacher_context.get("timeline", [])
+    
+    if timeline:
+        return {
+            "success": True,
+            "step": timeline[0],
+            "progress": {"current": 0, "total": len(timeline)}
+        }
+    return {"success": False, "error": "No timeline available"}
+
+@app.get("/api/teacher/timeline/overview")
+async def get_timeline_overview():
+    """Get the overview visualization (full algorithm view)."""
+    global _teacher_context
+    timeline = _teacher_context.get("timeline", [])
+    
+    # Find the overview step (usually the first one)
+    for step in timeline:
+        if step.get("phase") == "overview":
+            return {
+                "success": True,
+                "step": step,
+                "commands": step.get("visualization_commands", []),
+                "speech": step.get("speech_script", "")
+            }
+    
+    return {"success": False, "error": "No overview step found"}
 
 @app.post("/api/teacher/chat")
 async def teacher_chat(request: ChatRequest):
