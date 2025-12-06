@@ -123,8 +123,20 @@ const VisualExplanationPanel = ({ width, height, code, steps, codeLines }) => {
     // Render node based on type
     const renderNode = (node) => {
         const nodeType = node.type || 'circle';
-        const fillColor = node.highlight ? '#8B5CF6' : '#1F2937';
-        const strokeColor = node.highlight ? '#C4B5FD' : '#4B5563';
+        
+        // Color mapping for highlights
+        const colorMap = {
+            'yellow': { fill: '#FCD34D', stroke: '#F59E0B' },
+            'green': { fill: '#34D399', stroke: '#10B981' },
+            'red': { fill: '#F87171', stroke: '#EF4444' },
+            'blue': { fill: '#60A5FA', stroke: '#3B82F6' },
+            'purple': { fill: '#A78BFA', stroke: '#8B5CF6' },
+            'orange': { fill: '#FB923C', stroke: '#F97316' },
+        };
+        
+        const highlightColor = node.color && colorMap[node.color] ? colorMap[node.color] : colorMap['purple'];
+        const fillColor = node.highlight ? highlightColor.fill : '#1F2937';
+        const strokeColor = node.highlight ? highlightColor.stroke : '#4B5563';
 
         if (nodeType === 'rect') {
             return (
@@ -145,7 +157,7 @@ const VisualExplanationPanel = ({ width, height, code, steps, codeLines }) => {
                     <Text
                         text={String(node.value)}
                         fontSize={16}
-                        fill="white"
+                        fill={node.highlight ? '#1F2937' : 'white'}
                         align="center"
                         verticalAlign="middle"
                         width={50}
@@ -162,22 +174,113 @@ const VisualExplanationPanel = ({ width, height, code, steps, codeLines }) => {
                 <Group key={node.id} x={node.x} y={node.y}>
                     {/* Pointer arrow */}
                     <Line
-                        points={[0, 0, 0, 25]}
+                        points={[0, 0, 0, 30]}
                         stroke="#10B981"
-                        strokeWidth={2}
+                        strokeWidth={3}
                     />
                     <Line
-                        points={[-5, 20, 0, 25, 5, 20]}
+                        points={[-8, 22, 0, 30, 8, 22]}
                         stroke="#10B981"
+                        strokeWidth={3}
+                        lineCap="round"
+                        lineJoin="round"
+                    />
+                    <Text
+                        text={String(node.value)}
+                        fontSize={14}
+                        fill="#10B981"
+                        align="center"
+                        offsetX={15}
+                        offsetY={18}
+                        fontFamily="monospace"
+                        fontStyle="bold"
+                    />
+                </Group>
+            );
+        } else if (nodeType === 'index') {
+            return (
+                <Group key={node.id} x={node.x} y={node.y}>
+                    <Text
+                        text={String(node.value)}
+                        fontSize={12}
+                        fill="#6B7280"
+                        align="center"
+                        fontFamily="monospace"
+                    />
+                </Group>
+            );
+        } else if (nodeType === 'label') {
+            return (
+                <Group key={node.id} x={node.x} y={node.y}>
+                    <Text
+                        text={String(node.value)}
+                        fontSize={14}
+                        fill={node.color || '#9CA3AF'}
+                        fontFamily="monospace"
+                        fontStyle="bold"
+                    />
+                </Group>
+            );
+        } else if (nodeType === 'variable') {
+            return (
+                <Group key={node.id} x={node.x} y={node.y}>
+                    <Rect
+                        width={Math.max(120, String(node.value).length * 10)}
+                        height={32}
+                        fill={node.highlight ? '#1E40AF' : '#1F2937'}
+                        stroke={node.highlight ? '#3B82F6' : '#4B5563'}
                         strokeWidth={2}
+                        cornerRadius={6}
+                    />
+                    <Text
+                        text={String(node.value)}
+                        fontSize={14}
+                        fill="white"
+                        x={10}
+                        y={8}
+                        fontFamily="monospace"
+                    />
+                </Group>
+            );
+        } else if (nodeType === 'comparison') {
+            return (
+                <Group key={node.id} x={node.x} y={node.y}>
+                    <Rect
+                        width={Math.max(180, String(node.value).length * 10)}
+                        height={36}
+                        fill={node.highlight ? '#065F46' : '#1F2937'}
+                        stroke={node.highlight ? '#10B981' : '#4B5563'}
+                        strokeWidth={2}
+                        cornerRadius={8}
+                    />
+                    <Text
+                        text={String(node.value)}
+                        fontSize={14}
+                        fill={node.highlight ? '#A7F3D0' : '#9CA3AF'}
+                        x={12}
+                        y={10}
+                        fontFamily="monospace"
+                        fontStyle="bold"
+                    />
+                </Group>
+            );
+        } else if (nodeType === 'loop') {
+            return (
+                <Group key={node.id} x={node.x} y={node.y}>
+                    <Rect
+                        width={120}
+                        height={30}
+                        fill="#7C3AED"
+                        stroke="#A78BFA"
+                        strokeWidth={2}
+                        cornerRadius={15}
                     />
                     <Text
                         text={String(node.value)}
                         fontSize={12}
-                        fill="#10B981"
-                        align="center"
-                        offsetX={10}
-                        offsetY={15}
+                        fill="white"
+                        x={10}
+                        y={8}
                         fontFamily="monospace"
                         fontStyle="bold"
                     />
@@ -200,7 +303,7 @@ const VisualExplanationPanel = ({ width, height, code, steps, codeLines }) => {
                 <Text
                     text={String(node.value)}
                     fontSize={16}
-                    fill="white"
+                    fill={node.highlight ? '#1F2937' : 'white'}
                     align="center"
                     verticalAlign="middle"
                     offsetX={10}

@@ -85,7 +85,7 @@ async def fetch_context_from_backend() -> dict:
 
 async def generate_visualization_commands(user_request: str, step_number: int = None) -> list:
     """
-    CHANNEL 2: Use Gemini TEXT API to generate visualization commands.
+    CHANNEL 2: Use Gemini TEXT API to generate rich visualization commands.
     This is completely separate from the voice channel.
     """
     import google.generativeai as genai
@@ -96,7 +96,6 @@ async def generate_visualization_commands(user_request: str, step_number: int = 
         return []
     
     genai.configure(api_key=api_key)
-    # Use gemini-2.0-flash for text visualization (stable version)
     model = genai.GenerativeModel("gemini-2.0-flash")
     
     context = _current_context
@@ -107,37 +106,79 @@ async def generate_visualization_commands(user_request: str, step_number: int = 
         logger.warning("No code context available for visualization")
         return []
     
-    # Build visualization prompt
-    prompt = f"""You are generating JSON visualization commands for a code teaching whiteboard.
+    # Determine which step(s) to focus on
+    target_step = None
+    if step_number and step_number <= len(steps):
+        target_step = steps[step_number - 1]  # 1-indexed to 0-indexed
+    
+    # Build a rich visualization prompt
+    prompt = f"""You are an expert code visualization generator for an educational whiteboard.
+Your job is to create RICH, EDUCATIONAL visualizations that help students understand code execution.
 
-CODE:
+=== THE CODE ===
 {code}
 
-EXECUTION TRACE:
+=== EXECUTION TRACE ===
 """
     for i, step in enumerate(steps[:15]):
         line = step.get("line", step.get("lineNumber", "?"))
         step_code = step.get("code", "")
         variables = step.get("variables", step.get("locals", {}))
-        prompt += f"Step {i+1} (Line {line}): {step_code}\n"
+        marker = " ← FOCUS HERE" if step_number and (i + 1) == step_number else ""
+        prompt += f"Step {i+1} (Line {line}): {step_code}{marker}\n"
         if variables:
             prompt += f"  Variables: {variables}\n"
+    
+    if len(steps) > 15:
+        prompt += f"... ({len(steps) - 15} more steps)\n"
 
     prompt += f"""
 
-USER REQUEST: {user_request}
-{f"Focus on step {step_number}" if step_number else ""}
+=== USER REQUEST ===
+"{user_request}"
+{f"Focus specifically on Step {step_number}" if step_number else "Show an overview of the algorithm"}
 
-Generate JSON visualization commands to help explain this code.
-Output ONLY valid JSON objects, one per line, no explanation.
+=== YOUR TASK ===
+Generate JSON visualization commands to create a RICH, EDUCATIONAL visualization.
 
-Available commands:
-1. {{"action": "draw_array", "id": "arrayName", "elements": [1, 2, 3], "x": 100, "y": 100}}
-2. {{"action": "highlight_index", "id": "arrayName", "index": 0, "color": "yellow"}}  
-3. {{"action": "draw_pointer", "id": "ptr", "targetId": "arrayName", "index": 0, "label": "i"}}
-4. {{"action": "clear_canvas"}}
+VISUALIZATION COMMANDS AVAILABLE:
+1. Draw the main data structure:
+   {{"action": "draw_array", "id": "nums", "elements": [2, 4, 1], "x": 100, "y": 120, "label": "nums[]"}}
 
-Output the commands now:"""
+2. Highlight specific elements with colors (yellow, green, red, blue, purple, orange):
+   {{"action": "highlight_index", "id": "nums", "index": 0, "color": "yellow"}}
+
+3. Show pointers/iterators:
+   {{"action": "draw_pointer", "id": "i", "targetId": "nums", "index": 0, "label": "i"}}
+
+4. Show variable values:
+   {{"action": "draw_variable", "name": "max_val", "value": 5, "x": 100, "y": 200, "highlight": true}}
+
+5. Show comparisons being made:
+   {{"action": "draw_comparison", "left": "n", "operator": ">", "right": "max_val", "result": true, "x": 100, "y": 250}}
+
+6. Show loop iteration:
+   {{"action": "draw_loop_indicator", "iteration": 1, "variable": "n=2", "x": 50, "y": 80}}
+
+7. Add explanatory labels:
+   {{"action": "draw_label", "id": "step_label", "text": "Step 1: Initialize max_val", "x": 100, "y": 50}}
+
+8. Clear canvas before drawing:
+   {{"action": "clear_canvas"}}
+
+=== VISUALIZATION STRATEGY ===
+1. Start with clear_canvas
+2. Add a label explaining what's happening
+3. Draw the main data structure (array, list, etc.)
+4. Show current variable values
+5. Highlight the current element being processed
+6. Show pointers for loop variables
+7. Show any comparisons or operations
+
+Generate 4-8 commands for a clear visualization. Output ONLY valid JSON objects, one per line.
+DO NOT include any explanatory text, markdown, or comments - ONLY JSON commands.
+
+OUTPUT:"""
 
     try:
         response = await asyncio.to_thread(model.generate_content, prompt)
