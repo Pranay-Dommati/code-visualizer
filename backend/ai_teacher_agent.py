@@ -1,12 +1,23 @@
 """
-AI Teacher Agent - Dual Modality Voice + Visualization
-=======================================================
-This agent uses Gemini's dual modality output:
-- AUDIO: Natural speech for explanations
-- TEXT: JSON commands for visualizations (parsed silently)
+AI Teacher Agent - 3-Channel Industry-Standard Architecture
+============================================================
 
-Architecture: 
-  User speaks → Gemini (audio + text) → Agent parses text for JSON → Frontend draws
+CHANNEL 1: AUDIO AGENT (Gemini Realtime)
+  - Voice conversation only
+  - Speaks naturally with server-side turn detection
+  - Does NOT send JSON or handle visualization
+  - Modality: AUDIO only
+
+CHANNEL 2: TEXT AGENT (Gemini Text API)
+  - Generates JSON visualization commands
+  - Triggered by keyword detection (draw/show/visualize)
+  - No interruptions, no speech
+  - Deterministic JSON output
+
+CHANNEL 3: DATA PIPELINE
+  - Sends DataPacket with JSON to frontend
+  - Frontend canvas renders at 60fps
+  - Never interferes with voice
 """
 
 import logging
@@ -18,9 +29,8 @@ import aiohttp
 import asyncio
 from dotenv import load_dotenv
 from livekit import agents, rtc
-from livekit.agents import Agent, AgentSession, RoomInputOptions, RoomOutputOptions, room_io
+from livekit.agents import Agent, AgentSession, room_io
 from livekit.plugins.google import beta as google_beta
-from livekit.plugins.google.realtime import api_proto
 
 load_dotenv()
 
@@ -44,6 +54,14 @@ BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:5000")
 # Store context globally for the visualization generator
 _current_context = {}
 
+# Debounce visualization requests to prevent duplicates
+_last_viz_request_time = 0
+_viz_request_lock = asyncio.Lock() if hasattr(asyncio, 'Lock') else None
+
+
+# =============================================================================
+# CHANNEL 2: TEXT AGENT (Visualization JSON Generator)
+# =============================================================================
 
 async def fetch_context_from_backend() -> dict:
     """Fetch the current code context from the Backend API."""
@@ -55,7 +73,7 @@ async def fetch_context_from_backend() -> dict:
                     data = await response.json()
                     if data.get("success"):
                         context = data.get("context", {})
-                        _current_context = context  # Cache for visualization
+                        _current_context = context
                         logger.info(f"📋 Fetched context: {len(context.get('steps', []))} steps, {len(context.get('code', ''))} chars")
                         return context
                 logger.warning(f"Failed to fetch context: {response.status}")
@@ -67,8 +85,8 @@ async def fetch_context_from_backend() -> dict:
 
 async def generate_visualization_commands(user_request: str, step_number: int = None) -> list:
     """
-    Use Gemini TEXT API to generate visualization commands.
-    This is a separate call from the realtime audio.
+    CHANNEL 2: Use Gemini TEXT API to generate visualization commands.
+    This is completely separate from the voice channel.
     """
     import google.generativeai as genai
     
@@ -78,13 +96,15 @@ async def generate_visualization_commands(user_request: str, step_number: int = 
         return []
     
     genai.configure(api_key=api_key)
-    model = genai.GenerativeModel("gemini-2.0-flash-exp")
+    # Use gemini-2.0-flash for text visualization (stable version)
+    model = genai.GenerativeModel("gemini-2.0-flash")
     
     context = _current_context
     code = context.get("code", "")
     steps = context.get("steps", [])
     
     if not code and not steps:
+        logger.warning("No code context available for visualization")
         return []
     
     # Build visualization prompt
@@ -124,67 +144,16 @@ Output the commands now:"""
         text = response.text
         logger.info(f"🎨 Visualization response: {text[:200]}...")
         
-        # Extract JSON commands
         commands = extract_json_commands(text)
+        logger.info(f"🎨 Extracted {len(commands)} visualization commands")
         return commands
     except Exception as e:
         logger.error(f"Error generating visualization: {e}")
         return []
 
 
-def build_system_instructions(context: dict) -> str:
-    """Build Gemini system instructions for teaching (visualization is handled separately)."""
-    code = context.get("code", "")
-    steps = context.get("steps", [])
-    
-    # Base instructions - just for voice teaching
-    instructions = """You are a friendly, enthusiastic AI Teacher explaining code to students.
-Speak naturally, warmly, and encouragingly - like a real tutor sitting next to them.
-
-IMPORTANT: When the student asks you to "draw" or "show" or "visualize" something, 
-just SAY that you're showing it on the whiteboard. A visualization will appear automatically.
-Don't describe JSON or technical commands - just say "Let me show you that on the whiteboard" 
-and then explain what they're seeing.
-
-"""
-    
-    if not code and not steps:
-        instructions += "Greet the user warmly and ask what they'd like to learn today.\n"
-        return instructions
-    
-    # Add code context
-    instructions += f"""=== STUDENT'S CODE ===
-{code}
-
-"""
-    
-    if steps:
-        instructions += "=== EXECUTION TRACE (what happens when code runs) ===\n"
-        for i, step in enumerate(steps[:10]):
-            line = step.get("line", step.get("lineNumber", "?"))
-            step_code = step.get("code", "")
-            variables = step.get("variables", step.get("locals", {}))
-            instructions += f"Step {i+1} (Line {line}): {step_code}\n"
-            if variables:
-                var_str = ", ".join([f"{k}={v}" for k, v in list(variables.items())[:5]])
-                instructions += f"  Variables: {var_str}\n"
-        if len(steps) > 10:
-            instructions += f"... and {len(steps) - 10} more steps\n"
-        instructions += "\n"
-    
-    instructions += """=== TEACHING STYLE ===
-1. Be warm, encouraging, and patient
-2. Explain step-by-step what the code does
-3. When asked to visualize, say "Let me show you on the whiteboard" - a drawing will appear
-4. Use the execution trace to explain how variables change
-5. Celebrate when the student understands something!
-"""
-    
-    return instructions
-
-
 def extract_json_commands(text: str) -> list:
-    """Extract JSON visualization commands from AI response."""
+    """Extract JSON visualization commands from text."""
     commands = []
     
     # Find JSON in code blocks
@@ -212,28 +181,12 @@ def extract_json_commands(text: str) -> list:
     return commands
 
 
-def strip_json_from_text(text: str) -> str:
-    """Remove JSON blocks from text so they aren't spoken aloud."""
-    # Remove ```json ... ``` blocks
-    text = re.sub(r'```json\s*[\s\S]*?```', '', text)
-    # Remove inline JSON objects with action field
-    text = re.sub(r'\{[^{}]*"action"\s*:\s*"[^"]+"\s*[^{}]*\}', '', text)
-    # Clean up extra whitespace
-    text = re.sub(r'\n\s*\n', '\n', text)
-    text = re.sub(r'  +', ' ', text)
-    return text.strip()
-
-
-class TeacherAgent(Agent):
-    """Simple teaching agent with context-aware instructions."""
-    
-    def __init__(self, instructions: str):
-        super().__init__(instructions=instructions)
-        logger.info("📚 TeacherAgent initialized")
-
+# =============================================================================
+# CHANNEL 3: DATA PIPELINE (Send commands to frontend canvas)
+# =============================================================================
 
 async def send_command(room: rtc.Room, command: dict):
-    """Send a visualization command to the frontend."""
+    """Send a visualization command via DataPacket to frontend."""
     try:
         data = json.dumps(command).encode('utf-8')
         await room.local_participant.publish_data(data, reliable=True)
@@ -242,11 +195,81 @@ async def send_command(room: rtc.Room, command: dict):
         logger.error(f"Failed to send command: {e}")
 
 
+# =============================================================================
+# CHANNEL 1: AUDIO AGENT (Gemini Realtime - Voice Only)
+# =============================================================================
+
+def build_voice_instructions(context: dict) -> str:
+    """
+    Build simple voice-only instructions for the audio agent.
+    NO visualization commands - that's handled by Channel 2.
+    """
+    code = context.get("code", "")
+    steps = context.get("steps", [])
+    
+    # Simple, clean instructions for voice-only teaching
+    instructions = """You are a friendly, enthusiastic AI programming tutor.
+Speak naturally and warmly, like a real teacher sitting next to the student.
+
+IMPORTANT RULES:
+1. Just talk naturally - no JSON, no code blocks, no technical formatting
+2. When the student asks to "draw", "show", or "visualize" something, 
+   simply say "Let me show you that on the whiteboard" and explain what they'll see
+3. A visualization will appear automatically - you don't need to generate it
+4. Be encouraging and patient
+5. Use the execution trace to explain how variables change step by step
+
+"""
+    
+    if not code and not steps:
+        instructions += "Greet the student warmly and ask what they'd like to learn today.\n"
+        return instructions
+    
+    # Add code context
+    instructions += f"""=== THE STUDENT'S CODE ===
+{code}
+
+"""
+    
+    if steps:
+        instructions += "=== WHAT HAPPENS WHEN IT RUNS ===\n"
+        for i, step in enumerate(steps[:10]):
+            line = step.get("line", step.get("lineNumber", "?"))
+            step_code = step.get("code", "")
+            variables = step.get("variables", step.get("locals", {}))
+            instructions += f"Step {i+1} (Line {line}): {step_code}\n"
+            if variables:
+                var_str = ", ".join([f"{k}={v}" for k, v in list(variables.items())[:5]])
+                instructions += f"  → Variables: {var_str}\n"
+        if len(steps) > 10:
+            instructions += f"... and {len(steps) - 10} more steps\n"
+        instructions += "\n"
+    
+    instructions += """Remember: Just speak naturally! Explain the code step by step.
+When they want to see something, tell them you're showing it on the whiteboard.
+"""
+    
+    return instructions
+
+
+class VoiceTeacher(Agent):
+    """
+    CHANNEL 1: Voice-only teaching agent.
+    Uses Gemini Realtime AUDIO modality only.
+    """
+    
+    def __init__(self, instructions: str):
+        super().__init__(instructions=instructions)
+        logger.info("🎤 VoiceTeacher initialized (audio-only mode)")
+
+
 async def entrypoint(ctx: agents.JobContext):
-    """Main entrypoint - simplified and stable."""
+    """
+    Main entrypoint with 3-channel architecture.
+    """
     logger.info(f"🚀 Agent starting for room: {ctx.room.name}")
     
-    # Connect to the room
+    # Connect to the room (audio only for voice channel)
     await ctx.connect(auto_subscribe=agents.AutoSubscribe.AUDIO_ONLY)
     logger.info("✅ Connected to room")
     
@@ -255,109 +278,152 @@ async def entrypoint(ctx: agents.JobContext):
     participant = await ctx.wait_for_participant()
     logger.info(f"👤 Participant joined: {participant.identity}")
     
-    # Fetch context from backend (the source of truth)
-    logger.info("📥 Fetching context from backend API...")
+    # Fetch context from backend
+    logger.info("📥 Fetching context from backend...")
     context = await fetch_context_from_backend()
     
-    # Build instructions with context
-    instructions = build_system_instructions(context)
-    logger.info(f"📝 Built instructions ({len(instructions)} chars)")
+    # Build voice-only instructions (no visualization commands)
+    instructions = build_voice_instructions(context)
+    logger.info(f"📝 Built voice instructions ({len(instructions)} chars)")
     
-    # Create Gemini model with audio output + transcription
-    # The transcription gives us text of what was spoken - we can extract JSON from there
-    logger.info("🤖 Creating Gemini model with audio output + transcription...")
+    # ==========================================================================
+    # CHANNEL 1: Create Gemini Realtime model (AUDIO ONLY)
+    # ==========================================================================
+    logger.info("🎤 Creating Gemini Realtime model (audio-only)...")
     gemini_model = google_beta.realtime.RealtimeModel(
         model="gemini-2.0-flash-exp",
         api_key=os.getenv("GEMINI_API_KEY"),
         voice="Puck",
-        # Use AUDIO modality (default) - Gemini will speak
-        # Enable output transcription to capture what was said as text
-        output_audio_transcription=api_proto.types.AudioTranscriptionConfig(),
+        # Uses server-side turn detection by default
+        # Interruptions are enabled (required for server-side turn detection)
     )
     
-    # Create agent with context-aware instructions
-    agent = TeacherAgent(instructions=instructions)
+    # Create voice-only agent
+    agent = VoiceTeacher(instructions=instructions)
     
-    # Create session
+    # Create session with default settings for stability
     session = AgentSession(
         llm=gemini_model,
-        allow_interruptions=True,
+        allow_interruptions=True,  # Required for Gemini server-side turn detection
     )
     
-    # Event handlers
+    # ==========================================================================
+    # Event handlers for visualization trigger (Channel 2 integration)
+    # ==========================================================================
+    
+    # Track last visualization request to debounce
+    last_viz_time = {"time": 0, "last_transcript": ""}
+    
     @session.on("user_input_transcribed")
     def on_user_input(event):
-        transcript = event.transcript
-        logger.info(f"🎤 User: {transcript}")
+        """Detect visualization requests and trigger Channel 2."""
+        import time
         
-        # Detect visualization requests and trigger separate API call
-        viz_keywords = ["draw", "show", "visualize", "display", "diagram", "picture", "whiteboard"]
+        transcript = event.transcript
+        is_final = getattr(event, 'is_final', False)
+        
+        # Only log final transcripts to reduce noise
+        if is_final or len(transcript) > 20:
+            logger.info(f"🎤 User: {transcript} (final={is_final})")
+        
+        # Only process if this looks like a complete sentence (ends with punctuation or is marked final)
+        # OR if it's longer than the last transcript we processed
+        if not is_final:
+            # For streaming transcripts, only trigger if it ends with punctuation
+            if not any(transcript.rstrip().endswith(p) for p in ['.', '?', '!']):
+                return
+        
+        # Debounce: ignore if we just triggered visualization in the last 5 seconds
+        current_time = time.time()
+        if current_time - last_viz_time["time"] < 5.0:
+            return
+        
+        # Skip if this is the same or shorter than what we already processed
+        if len(transcript) <= len(last_viz_time["last_transcript"]):
+            return
+        
+        # Keywords that trigger visualization generation (US + UK spelling)
+        viz_keywords = [
+            "draw", "show", "visualize", "visualise", "display",
+            "diagram", "picture", "whiteboard", "illustrate"
+        ]
         transcript_lower = transcript.lower()
         
         if any(kw in transcript_lower for kw in viz_keywords):
-            logger.info("🎨 Detected visualization request - generating commands...")
+            logger.info(f"🎨 Visualization keyword detected in: {transcript}")
+            last_viz_time["time"] = current_time
+            last_viz_time["last_transcript"] = transcript
             
-            # Extract step number if mentioned
-            step_num = None
-            import re as re_module
-            step_match = re_module.search(r'step\s*(\d+)', transcript_lower)
-            if step_match:
-                step_num = int(step_match.group(1))
-            
-            # Generate visualization in background
-            async def gen_and_send_viz():
-                commands = await generate_visualization_commands(transcript, step_num)
+            # Extract one or more step numbers if mentioned
+            step_nums = []
+            # Numeric "step 2"
+            for m in re.finditer(r'step\s*(\d+)', transcript_lower):
+                try:
+                    step_nums.append(int(m.group(1)))
+                except Exception:
+                    pass
+            # Ordinals "second", "third" etc.
+            ordinal_map = {
+                "first": 1, "second": 2, "third": 3, "fourth": 4, "fifth": 5,
+                "sixth": 6, "seventh": 7, "eighth": 8, "ninth": 9, "tenth": 10
+            }
+            for word, num in ordinal_map.items():
+                if word in transcript_lower:
+                    step_nums.append(num)
+            # If none found, leave as None to generate a general visualization
+            if not step_nums:
+                step_nums = [None]
+
+            # Deduplicate while preserving order
+            seen = set()
+            ordered_steps = []
+            for n in step_nums:
+                if n not in seen:
+                    seen.add(n)
+                    ordered_steps.append(n)
+
+            logger.info(f"🎨 Triggering Channel 2 for steps {ordered_steps}")
+
+            # Generate visualizations asynchronously for each requested step
+            async def trigger_visualization_for(step_n: int | None):
+                commands = await generate_visualization_commands(transcript, step_n)
                 if commands:
-                    logger.info(f"🎨 Generated {len(commands)} visualization commands")
+                    logger.info(f"🎨 Channel 2 generated {len(commands)} commands for step {step_n} → Channel 3")
                     for cmd in commands:
                         await send_command(ctx.room, cmd)
                 else:
-                    logger.warning("No visualization commands generated")
-            
-            asyncio.create_task(gen_and_send_viz())
+                    logger.warning(f"Channel 2: No visualization commands generated for step {step_n}")
+
+            for s in ordered_steps:
+                asyncio.create_task(trigger_visualization_for(s))
     
     @session.on("agent_state_changed") 
     def on_state_change(event):
-        logger.info(f"🔄 State: {event.old_state} → {event.new_state}")
-    
-    @session.on("conversation_item_added")
-    def on_conversation_item(event):
-        # This event fires when a complete message is added to the conversation
-        item = event.item
-        logger.info(f"📝 Conversation item added: {item}")
-        
-        # Try to extract content for JSON commands
-        if hasattr(item, 'content') and item.content:
-            content_list = item.content if isinstance(item.content, list) else [item.content]
-            for content in content_list:
-                if isinstance(content, str):
-                    logger.info(f"📝 Content text: {content[:200]}...")
-                    # Extract JSON commands from the text content
-                    commands = extract_json_commands(content)
-                    if commands:
-                        logger.info(f"🎨 Found {len(commands)} visualization commands")
-                        for cmd in commands:
-                            asyncio.create_task(send_command(ctx.room, cmd))
+        logger.info(f"🔄 Voice agent state: {event.old_state} → {event.new_state}")
     
     @session.on("error")
     def on_error(event):
         logger.error(f"❌ Session error: {event.error}")
     
-    # Start the session with text output enabled to capture transcription
-    logger.info("▶️ Starting session...")
+    # ==========================================================================
+    # Start the voice session
+    # ==========================================================================
+    logger.info("▶️ Starting voice session (Channel 1)...")
     await session.start(
         agent=agent,
         room=ctx.room,
-        room_input_options=RoomInputOptions(audio_enabled=True, text_enabled=True),
-        room_output_options=RoomOutputOptions(audio_enabled=True, transcription_enabled=True),
         room_options=room_io.RoomOptions(
-            text_output=room_io.TextOutputOptions(),  # Enable text output for transcription
+            audio_input=True,
+            audio_output=True,
         ),
     )
     
-    logger.info("✅ AI Teacher is ready! Listening for voice input...")
+    logger.info("✅ AI Teacher is ready!")
+    logger.info("   Channel 1: Voice (Gemini Realtime Audio)")
+    logger.info("   Channel 2: Visualization (Gemini Text API)")
+    logger.info("   Channel 3: DataPacket → Canvas")
 
 
 if __name__ == "__main__":
-    logger.info("🎓 Starting AI Teacher Agent...")
+    logger.info("🎓 Starting AI Teacher Agent (3-Channel Architecture)...")
     agents.cli.run_app(agents.WorkerOptions(entrypoint_fnc=entrypoint))
