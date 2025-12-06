@@ -438,13 +438,66 @@ async def entrypoint(ctx: agents.JobContext):
             for s in ordered_steps:
                 asyncio.create_task(trigger_visualization_for(s))
     
+    # Track speaking state to detect overlaps
+    voice_state = {"current": "initializing", "speaking_count": 0, "last_change": 0}
+    
     @session.on("agent_state_changed") 
     def on_state_change(event):
-        logger.info(f"🔄 Voice agent state: {event.old_state} → {event.new_state}")
+        import time
+        current_time = time.time()
+        time_since_last = current_time - voice_state["last_change"]
+        voice_state["last_change"] = current_time
+        
+        old = str(event.old_state)
+        new = str(event.new_state)
+        
+        # Track speaking count
+        if "speaking" in new.lower():
+            voice_state["speaking_count"] += 1
+        
+        # Detect anomalies
+        if old == voice_state["current"]:
+            logger.info(f"🔄 Voice agent state: {old} → {new} (after {time_since_last:.2f}s)")
+        else:
+            logger.warning(f"⚠️ State mismatch! Expected {voice_state['current']}, got old={old}. Transition: {old} → {new}")
+        
+        # Detect rapid speaking transitions (potential overlap)
+        if "speaking" in new.lower() and "speaking" in old.lower():
+            logger.error(f"🔴 OVERLAP DETECTED: speaking → speaking transition!")
+        
+        if "speaking" in new.lower() and time_since_last < 0.5 and "listening" not in old.lower():
+            logger.warning(f"⚠️ Rapid transition to speaking ({time_since_last:.2f}s) - possible overlap")
+        
+        voice_state["current"] = new
+        logger.info(f"📊 Speaking count so far: {voice_state['speaking_count']}")
     
     @session.on("error")
     def on_error(event):
         logger.error(f"❌ Session error: {event.error}")
+    
+    # ==========================================================================
+    # Track audio publications to detect duplicates
+    # ==========================================================================
+    @ctx.room.on("track_published")
+    def on_track_published(publication, participant):
+        logger.info(f"📡 Track published: {publication.kind} by {participant.identity} (sid: {publication.sid})")
+        if publication.kind == "audio":
+            logger.info(f"🔊 Audio track details: source={publication.source}, muted={publication.muted}")
+    
+    @ctx.room.on("track_subscribed")
+    def on_track_subscribed(track, publication, participant):
+        logger.info(f"📡 Track subscribed: {track.kind} from {participant.identity} (sid: {track.sid})")
+    
+    @ctx.room.on("track_unsubscribed")
+    def on_track_unsubscribed(track, publication, participant):
+        logger.info(f"📡 Track unsubscribed: {track.kind} from {participant.identity}")
+    
+    # Log current participants and their tracks
+    logger.info(f"👥 Current participants in room: {len(ctx.room.remote_participants)}")
+    for pid, p in ctx.room.remote_participants.items():
+        logger.info(f"   - {p.identity}: {len(p.track_publications)} tracks")
+        for tid, pub in p.track_publications.items():
+            logger.info(f"     └─ {pub.kind}: {pub.source} (subscribed={pub.subscribed})")
     
     # ==========================================================================
     # Start the voice session

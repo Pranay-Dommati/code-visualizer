@@ -7,6 +7,7 @@ class LiveKitConnection {
         this.onDrawingCommand = null;
         this.onConnectionStateChange = null;
         this.pendingContext = null; // Store context to send after connection
+        this.attachedTracks = new Set(); // Track attached audio tracks to prevent duplicates
     }
 
     async connect(token, url, onDrawingCommand, onConnectionStateChange) {
@@ -37,9 +38,17 @@ class LiveKitConnection {
 
         // Handle incoming tracks (AI voice)
         this.room.on(RoomEvent.TrackSubscribed, (track, publication, participant) => {
+            console.log('📡 Track subscribed:', track.kind, 'from:', participant?.identity);
             if (track.kind === "audio") {
-                this.handleAudioTrack(track);
+                this.handleAudioTrack(track, participant);
             }
+        });
+        
+        // Handle track unsubscription to clean up
+        this.room.on(RoomEvent.TrackUnsubscribed, (track, publication, participant) => {
+            console.log('📡 Track unsubscribed:', track.kind, 'from:', participant?.identity);
+            const trackId = track.sid || track.name || `${participant?.identity}-audio`;
+            this.attachedTracks.delete(trackId);
         });
 
         // Handle incoming data packets (drawing commands)
@@ -68,19 +77,44 @@ class LiveKitConnection {
         }
     }
 
-    handleAudioTrack(track) {
+    handleAudioTrack(track, participant) {
+        // Prevent duplicate track attachments
+        const trackId = track.sid || track.name || `${participant?.identity}-audio`;
+        
+        if (this.attachedTracks.has(trackId)) {
+            console.log('⚠️ Audio track already attached, skipping:', trackId);
+            return;
+        }
+        
+        console.log('🔊 Attaching audio track:', trackId, 'from:', participant?.identity);
+        
         if (!this.audioElement) {
             this.audioElement = document.createElement("audio");
             this.audioElement.autoplay = true;
+            this.audioElement.id = "ai-teacher-audio";
             document.body.appendChild(this.audioElement);
+        } else {
+            // Detach any existing tracks first
+            if (this.audioElement.srcObject) {
+                console.log('🔇 Detaching previous audio');
+            }
         }
+        
         track.attach(this.audioElement);
+        this.attachedTracks.add(trackId);
+        console.log('✅ Audio track attached successfully');
     }
 
     async startMicrophone() {
         if (!this.room) return;
         try {
-            await this.room.localParticipant.setMicrophoneEnabled(true);
+            // Use echo cancellation and noise suppression for cleaner audio
+            await this.room.localParticipant.setMicrophoneEnabled(true, {
+                echoCancellation: true,
+                noiseSuppression: true,
+                autoGainControl: true,
+            });
+            console.log('🎤 Microphone enabled with echo cancellation');
         } catch (error) {
             console.error("Failed to enable microphone:", error);
             throw error;
@@ -151,15 +185,24 @@ class LiveKitConnection {
     }
 
     disconnect() {
+        console.log('🔌 Disconnecting from LiveKit room...');
+        
         if (this.room) {
             this.room.disconnect();
             this.room = null;
         }
         if (this.audioElement) {
+            this.audioElement.pause();
+            this.audioElement.srcObject = null;
             this.audioElement.remove();
             this.audioElement = null;
         }
+        
+        // Reset all state
+        this.attachedTracks.clear();
         this.pendingContext = null;
+        
+        console.log('✅ Disconnected and cleaned up');
     }
 }
 
