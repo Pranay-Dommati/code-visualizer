@@ -16,6 +16,9 @@
 import * as PIXI from 'pixi.js';
 import gsap from 'gsap';
 
+// NOTE: We use direct property animation (x, y, alpha, scale.x, scale.y)
+// instead of PixiPlugin for better PixiJS v8 compatibility
+
 // === THEME ===
 const THEME = {
     bg: 0x0a0f1a,
@@ -34,16 +37,17 @@ const THEME = {
     text: { title: 0xffffff, label: 0x94a3b8 },
 };
 
-// === ANIMATION TIMING ===
+// === ANIMATION TIMING (in seconds) ===
+// These control how LONG each animation takes and how we pace the story
 const TIMING = {
-    stagger: 0.08,      // Delay between array elements
-    appear: 0.4,        // Object appear duration
-    move: 0.5,          // Pointer/element movement
-    morph: 0.3,         // Value change morph
-    highlight: 0.25,    // Highlight transition
-    comparison: 0.6,    // Comparison animation total
-    result: 0.8,        // Result reveal
-    pause: 0.3,         // Pause between steps
+    stagger: 0.12,      // Delay between array elements appearing
+    appear: 0.5,        // Object appear duration
+    move: 0.8,          // Pointer/element movement (SLOWER)
+    morph: 0.5,         // Value change morph
+    highlight: 0.5,     // Highlight transition
+    comparison: 1.5,    // Comparison animation total (SLOWER)
+    result: 2.0,        // Result reveal (SLOWER)
+    pause: 0.8,         // Pause between steps (IMPORTANT for pacing!)
 };
 
 const EASE = {
@@ -53,6 +57,19 @@ const EASE = {
     bounce: 'elastic.out(1, 0.5)',
     smooth: 'power2.out',
 };
+
+/**
+ * Helper to animate PixiJS scale (works without PixiPlugin)
+ * GSAP can animate nested properties like scale.x and scale.y
+ */
+function animateScale(tl, target, toScale, duration, ease, position) {
+    tl.to(target.scale, {
+        x: toScale,
+        y: toScale,
+        duration,
+        ease,
+    }, position);
+}
 
 class CinematicDirector {
     constructor() {
@@ -99,15 +116,21 @@ class CinematicDirector {
     // =========================================================================
     
     async init(container, width, height) {
+        this.width = width;
+        this.height = height;
+
         if (this.isReady) {
+            console.log('🎬 Already ready, re-attaching and resizing...');
+            const canvas = this.app.canvas || this.app.view;
+            if (canvas && container && !container.contains(canvas)) {
+                container.appendChild(canvas);
+            }
             this.resize(width, height);
             return;
         }
 
-        this.width = width;
-        this.height = height;
-
         try {
+            console.log('🎬 Creating PixiJS Application...', { width, height });
             this.app = new PIXI.Application();
             await this.app.init({
                 width,
@@ -120,7 +143,11 @@ class CinematicDirector {
 
             const canvas = this.app.canvas || this.app.view;
             if (canvas) {
+                console.log('🎬 Appending canvas to container...');
                 container.appendChild(canvas);
+                console.log('🎬 Canvas appended, size:', canvas.width, 'x', canvas.height);
+            } else {
+                console.error('🎬❌ No canvas/view found on app!');
             }
 
             // Create layer hierarchy
@@ -131,7 +158,7 @@ class CinematicDirector {
             this.masterTimeline = gsap.timeline({ paused: true });
             
             this.isReady = true;
-            console.log('🎬 Cinematic Director ready');
+            console.log('🎬 Cinematic Director ready! Stage children:', this.app.stage.children.length);
             
         } catch (err) {
             console.error('Cinematic Director init failed:', err);
@@ -213,7 +240,25 @@ class CinematicDirector {
      * Play the entire timeline from current position
      */
     play() {
-        this.masterTimeline?.play();
+        if (!this.masterTimeline) {
+            console.error('🎬❌ No master timeline to play!');
+            return;
+        }
+        const tweens = this.masterTimeline.getChildren();
+        console.log('🎬▶️ Playing timeline, duration:', this.masterTimeline.duration());
+        console.log('🎬▶️ Timeline tweens count:', tweens.length);
+        console.log('🎬▶️ First 3 tweens:', tweens.slice(0, 3).map(t => ({
+            target: t.targets?.()?.[0]?.constructor?.name,
+            duration: t.duration?.(),
+            startTime: t.startTime?.()
+        })));
+        
+        // Add onUpdate to track progress
+        this.masterTimeline.eventCallback('onUpdate', () => {
+            console.log('🎬 Timeline progress:', this.masterTimeline.progress().toFixed(2));
+        });
+        
+        this.masterTimeline.play();
     }
 
     /**
@@ -240,6 +285,11 @@ class CinematicDirector {
      * Creates array elements and animates them in with stagger
      */
     introduceArray(arrayName, values) {
+        console.log('🎬 introduceArray:', arrayName, values);
+        console.log('🎬 Canvas size:', this.width, 'x', this.height);
+        console.log('🎬 Layers.arrays exists:', !!this.layers.arrays);
+        console.log('🎬 App stage children:', this.app?.stage?.children?.length);
+        
         this.state.arrayName = arrayName;
         this.state.arrayValues = values;
         
@@ -249,6 +299,8 @@ class CinematicDirector {
         const totalWidth = values.length * elemWidth + (values.length - 1) * gap;
         const startX = (this.width - totalWidth) / 2 + elemWidth / 2;
         const arrayY = this.height * 0.35;
+        
+        console.log('🎬 Array positioning: startX=', startX, 'arrayY=', arrayY);
         
         // Create label (if not exists)
         if (!this.registry.arrayLabel) {
@@ -268,10 +320,13 @@ class CinematicDirector {
             elem.x = startX + idx * (elemWidth + gap);
             elem.y = arrayY;
             elem.alpha = 0;
-            elem.scale.set(0.5);
+            elem.scale.set(0);
             this.layers.arrays.addChild(elem);
             this.registry.arrayElements.push(elem);
+            console.log('🎬 Created element', idx, 'at', elem.x, elem.y, 'alpha=', elem.alpha);
         });
+        
+        console.log('🎬 Arrays layer children count:', this.layers.arrays.children.length);
         
         // Add to timeline: Staggered entrance
         const tl = this.masterTimeline;
@@ -286,12 +341,13 @@ class CinematicDirector {
         
         // Elements pop in with stagger
         this.registry.arrayElements.forEach((elem, idx) => {
+            const elemPos = pos + TIMING.stagger * idx;
             tl.to(elem, {
                 alpha: 1,
-                pixi: { scale: 1 },
                 duration: TIMING.appear,
                 ease: EASE.appear,
-            }, pos + TIMING.stagger * idx);
+            }, elemPos);
+            animateScale(tl, elem, 1, TIMING.appear, EASE.appear, elemPos);
         });
         
         this.timelinePosition += TIMING.appear + TIMING.stagger * values.length + TIMING.pause;
@@ -365,28 +421,18 @@ class CinematicDirector {
         const bg = elem.getChildByName('bg');
         
         // Animate scale pop + color change
-        tl.to(elem, {
-            pixi: { scale: 1.15 },
-            duration: TIMING.highlight,
-            ease: EASE.bounce,
-        }, pos);
+        animateScale(tl, elem, 1.15, TIMING.highlight, EASE.bounce, pos);
         
-        // Tint the background
+        // Tint the background (using direct tint property)
         if (bg) {
-            tl.to(bg, {
-                pixi: { tint: colors.bg },
-                duration: TIMING.highlight,
-            }, pos);
+            tl.call(() => { bg.tint = colors.bg; }, [], pos);
         }
         
         // Add glow
         this.addGlowEffect(elem, colors.glow || colors.bg, pos);
         
         // Return to normal scale
-        tl.to(elem, {
-            pixi: { scale: 1 },
-            duration: TIMING.highlight,
-        }, pos + TIMING.highlight);
+        animateScale(tl, elem, 1, TIMING.highlight, EASE.smooth, pos + TIMING.highlight);
         
         this.timelinePosition += TIMING.highlight * 2;
     }
@@ -405,10 +451,7 @@ class CinematicDirector {
         const pos = this.timelinePosition;
         
         if (bg) {
-            tl.to(bg, {
-                pixi: { tint: 0xffffff }, // Reset tint
-                duration: TIMING.morph,
-            }, pos);
+            tl.call(() => { bg.tint = 0xffffff; }, [], pos); // Reset tint
         }
         
         if (glow) {
@@ -442,10 +485,10 @@ class CinematicDirector {
             // Animate in
             tl.to(box, {
                 alpha: 1,
-                pixi: { scale: 1 },
                 duration: TIMING.appear,
                 ease: EASE.appear,
             }, pos);
+            animateScale(tl, box, 1, TIMING.appear, EASE.appear, pos);
             
             this.timelinePosition += TIMING.appear;
         } else {
@@ -456,32 +499,19 @@ class CinematicDirector {
             
             if (highlight && bg) {
                 // Flash effect
-                tl.to(bg, {
-                    pixi: { tint: THEME.array.success.bg },
-                    duration: TIMING.morph,
-                }, pos);
-                tl.to(bg, {
-                    pixi: { tint: 0xffffff },
-                    duration: TIMING.morph,
-                }, pos + TIMING.morph);
+                tl.call(() => { bg.tint = THEME.array.success.bg; }, [], pos);
+                tl.call(() => { bg.tint = 0xffffff; }, [], pos + TIMING.morph);
             }
             
             // Scale bounce
-            tl.to(box, {
-                pixi: { scale: 1.2 },
-                duration: TIMING.morph,
-                ease: EASE.bounce,
-            }, pos);
+            animateScale(tl, box, 1.2, TIMING.morph, EASE.bounce, pos);
             
             // Update value text mid-animation
             tl.call(() => {
                 if (valueText) valueText.text = `${name} = ${value}`;
             }, [], pos + TIMING.morph * 0.5);
             
-            tl.to(box, {
-                pixi: { scale: 1 },
-                duration: TIMING.morph,
-            }, pos + TIMING.morph);
+            animateScale(tl, box, 1, TIMING.morph, EASE.smooth, pos + TIMING.morph);
             
             this.timelinePosition += TIMING.morph * 2;
         }
@@ -546,44 +576,47 @@ class CinematicDirector {
         
         // === CINEMATIC ANIMATION SEQUENCE ===
         
+        console.log('🎬 Adding comparison animation to timeline');
+        
         // Left box slides in from left
         tl.to(leftBox, {
             alpha: 1,
-            pixi: { scale: 1 },
             duration: TIMING.comparison * 0.3,
             ease: EASE.appear,
+            onStart: () => console.log('🎬 Showing left box'),
         }, pos);
+        animateScale(tl, leftBox, 1, TIMING.comparison * 0.3, EASE.appear, pos);
         
         // Right box slides in from right
         tl.to(rightBox, {
             alpha: 1,
-            pixi: { scale: 1 },
             duration: TIMING.comparison * 0.3,
             ease: EASE.appear,
+            onStart: () => console.log('🎬 Showing right box'),
         }, pos + 0.1);
+        animateScale(tl, rightBox, 1, TIMING.comparison * 0.3, EASE.appear, pos + 0.1);
         
         // Operator appears
         tl.to(opText, {
             alpha: 1,
             duration: TIMING.comparison * 0.2,
+            onStart: () => console.log('🎬 Showing operator'),
         }, pos + 0.25);
         
         // Dramatic pause, then result
         tl.to(resultText, {
             alpha: 1,
-            pixi: { scale: 1 },
             duration: TIMING.comparison * 0.4,
+            onStart: () => console.log('🎬 Showing result text'),
             ease: EASE.bounce,
         }, pos + TIMING.comparison * 0.6);
+        animateScale(tl, resultText, 1, TIMING.comparison * 0.4, EASE.bounce, pos + TIMING.comparison * 0.6);
         
         // If true, flash the left box green
         if (result) {
             const leftBg = leftBox.getChildByName('bg');
             if (leftBg) {
-                tl.to(leftBg, {
-                    pixi: { tint: THEME.array.success.bg },
-                    duration: 0.2,
-                }, pos + TIMING.comparison * 0.8);
+                tl.call(() => { leftBg.tint = THEME.array.success.bg; }, [], pos + TIMING.comparison * 0.8);
             }
         }
         
@@ -661,20 +694,23 @@ class CinematicDirector {
         
         // === CINEMATIC RESULT ANIMATION ===
         
+        console.log('🎬 Adding result animation to timeline');
+        
         // Fly up and scale in
         tl.to(box, {
             y: resultY,
             alpha: 1,
-            pixi: { scale: 1 },
             duration: TIMING.result,
             ease: EASE.bounce,
+            onStart: () => console.log('🎬 Showing final result box'),
         }, pos);
+        animateScale(tl, box, 1, TIMING.result, EASE.bounce, pos);
         
-        // Pulsing glow
+        // Pulsing glow (Finite repeat)
         tl.to(glow, {
             alpha: 0.15,
             duration: 0.8,
-            repeat: -1,
+            repeat: 5,
             yoyo: true,
             ease: 'sine.inOut',
         }, pos + TIMING.result);
@@ -832,14 +868,14 @@ class CinematicDirector {
             duration: TIMING.highlight,
         }, timelinePos);
         
-        // Pulsing
-        gsap.to(glow, {
+        // Pulsing (Finite repeat to avoid infinite timeline duration)
+        this.masterTimeline.to(glow, {
             alpha: 0.15,
             duration: 0.6,
-            repeat: -1,
+            repeat: 3,
             yoyo: true,
             ease: 'sine.inOut',
-        });
+        }, timelinePos + TIMING.highlight);
     }
 
     clearAll() {
@@ -879,9 +915,18 @@ class CinematicDirector {
      * Takes an array of transition commands and builds the master timeline.
      */
     buildStory(transitions) {
+        if (!this.isReady) {
+            console.error('🎬 CinematicDirector not ready! Cannot build story.');
+            return;
+        }
+        
+        console.log('🎬 Building story with', transitions.length, 'transitions');
+        
         this.startNewStory();
         
-        transitions.forEach(t => {
+        transitions.forEach((t, idx) => {
+            console.log(`🎬 [${idx + 1}/${transitions.length}] Processing:`, t.action, t);
+            
             switch (t.action) {
                 case 'introduce_array':
                     this.introduceArray(t.name, t.values);
@@ -914,6 +959,9 @@ class CinematicDirector {
                     console.warn('Unknown transition:', t.action);
             }
         });
+        
+        console.log('🎬 Story built! Total timeline duration:', this.timelinePosition, 'seconds');
+        console.log('🎬 Starting playback...');
         
         // Auto-play
         this.play();

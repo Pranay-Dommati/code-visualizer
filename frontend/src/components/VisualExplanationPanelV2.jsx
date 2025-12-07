@@ -165,14 +165,28 @@ const VisualExplanationPanelV2 = ({ width, height, code, steps, codeLines }) => 
                     // ============================================================
                     if (command.action === 'build_cinematic_story' && command.transitions) {
                         console.log('🎬🎬🎬 BUILDING CINEMATIC STORY with', command.transitions.length, 'transitions');
+                        console.log('🎬 First 3 transitions:', command.transitions.slice(0, 3));
+                        console.log('🎬 CinematicDirector.isReady:', cinematicDirector.isReady);
+                        
                         setIsPlaying(true);
                         setCinematicReady(true);
                         
                         // Build and play the continuous animation
-                        cinematicDirector.buildStory(command.transitions);
-                        
-                        // Mark as playing
-                        setStatus('🎬 Playing cinematic story...');
+                        if (cinematicDirector.isReady) {
+                            cinematicDirector.buildStory(command.transitions);
+                            setStatus('🎬 Playing cinematic story...');
+                        } else {
+                            console.error('🎬❌ CinematicDirector not ready! Waiting...');
+                            // Try again after a delay
+                            setTimeout(() => {
+                                if (cinematicDirector.isReady) {
+                                    console.log('🎬 Retrying buildStory...');
+                                    cinematicDirector.buildStory(command.transitions);
+                                } else {
+                                    console.error('🎬❌ CinematicDirector still not ready!');
+                                }
+                            }, 500);
+                        }
                     }
                     // Handle visual step rendering (legacy - uses tracer data like left panel)
                     else if (command.action === 'render_visual_step') {
@@ -196,6 +210,12 @@ const VisualExplanationPanelV2 = ({ width, height, code, steps, codeLines }) => 
                     }
                     // Handle semantic scene rendering from agent (legacy)
                     else if (command.action === 'render_scene' && command.scene) {
+                        // IGNORE legacy commands if cinematic story is playing
+                        if (isPlaying && cinematicReady) {
+                            console.log('🎬🚫 Ignoring legacy render_scene during cinematic playback');
+                            return;
+                        }
+                        
                         console.log('🎬 Rendering scene:', command.scene.type);
                         // Create a step-like object for the renderer
                         const stepData = {

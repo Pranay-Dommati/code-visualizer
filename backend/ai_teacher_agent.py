@@ -56,6 +56,7 @@ _current_step_index = 0
 _room = None
 _session = None
 _active_rooms = set()  # Track active room sessions to prevent duplicates
+_is_cinematic_mode = False  # NEW: Flag to prevent legacy commands during cinematic playback
 
 
 # =============================================================================
@@ -182,6 +183,8 @@ async def teach_step(room: rtc.Room, session: AgentSession, step: dict, step_num
     1. Sends SEMANTIC scene to frontend (not pixel coords!)
     2. Generates speech for the AI to speak
     """
+    global _is_cinematic_mode
+    
     if not step:
         return
     
@@ -196,7 +199,8 @@ async def teach_step(room: rtc.Room, session: AgentSession, step: dict, step_num
     
     # Send SEMANTIC scene command to frontend
     # The frontend rendering engine handles layout and animation
-    if scene:
+    # CRITICAL: Do NOT send legacy scene commands if we are in cinematic mode!
+    if scene and not _is_cinematic_mode:
         await send_command(room, {
             "action": "render_scene",
             "scene": scene,
@@ -204,6 +208,8 @@ async def teach_step(room: rtc.Room, session: AgentSession, step: dict, step_num
             "total": total,
             "phase": phase,
         })
+    elif _is_cinematic_mode:
+        logger.info("   🚫 Skipping render_scene (Cinematic Mode Active)")
     
     # Return the speech script - caller will inject it into the agent
     return speech
@@ -218,13 +224,24 @@ async def run_full_walkthrough(room: rtc.Room, session: AgentSession):
     2. Frontend builds ONE master timeline and plays it continuously
     3. Speech can be added alongside (but animation is continuous)
     """
-    global _cinematic_transitions, _current_timeline
+    global _cinematic_transitions, _current_timeline, _is_cinematic_mode
+    
+    # Set cinematic mode to TRUE to block legacy commands
+    _is_cinematic_mode = True
+    
+    # Re-fetch context to ensure we have latest transitions
+    logger.info("🎬 Fetching latest context for walkthrough...")
+    await fetch_context_and_timeline()
+    
+    logger.info(f"🎬 Cinematic transitions available: {len(_cinematic_transitions)}")
     
     # FIRST: Send the cinematic story to frontend
     # This builds ONE continuous animation, not separate scenes
     if _cinematic_transitions:
         logger.info(f"🎬 Sending cinematic story ({len(_cinematic_transitions)} transitions)")
         await send_cinematic_story(room)
+    else:
+        logger.warning("⚠️ No cinematic transitions found! Check if context was sent to backend.")
     
     # Collect speeches from timeline for narration
     if not _current_timeline:
@@ -245,7 +262,10 @@ async def run_full_walkthrough(room: rtc.Room, session: AgentSession):
 
 async def show_specific_step(room: rtc.Room, session: AgentSession, step_num: int):
     """Show a specific step by number."""
-    global _visual_timeline, _current_timeline, _current_step_index
+    global _visual_timeline, _current_timeline, _current_step_index, _is_cinematic_mode
+    
+    # If user manually asks for a step, disable cinematic mode
+    _is_cinematic_mode = False
     
     timeline = _visual_timeline if _visual_timeline else _current_timeline
     
@@ -450,7 +470,9 @@ async def entrypoint(ctx: agents.JobContext):
                     "excuse me", "i'm using", "excuse me i'm",
                     "let me walk", "let's find", "algorithm", "maximum value", 
                     "checking", "comparing", "initialize", "updating",
-                    "step one", "step two", "as you can see"
+                    "step one", "step two", "step three", "step four", "step five",
+                    "step 1", "step 2", "step 3", "step 4", "step 5",
+                    "as you can see", "notice how", "look at"
                 ]
                 if any(phrase in transcript_lower for phrase in echo_phrases):
                     logger.debug(f"🔇 Ignoring echo (agent speaking): {transcript}")
