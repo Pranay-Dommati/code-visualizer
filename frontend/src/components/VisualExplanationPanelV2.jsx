@@ -97,10 +97,41 @@ const VisualExplanationPanelV2 = ({ width, height, code, steps, codeLines }) => 
         }
     }, [timeline]);
 
-    // Auto-play through timeline
-    const playTimeline = useCallback(() => {
+    // Auto-play through timeline - NOW USES CINEMATIC DIRECTOR!
+    const playTimeline = useCallback(async () => {
+        console.log('🎬 playTimeline called, timeline length:', timeline.length);
+        
+        // First, try to trigger the cinematic animation via the agent
+        if (isConnected) {
+            console.log('🎬 Fetching cinematic transitions from backend...');
+            try {
+                const response = await fetch('http://localhost:5000/api/teacher/context');
+                const data = await response.json();
+                
+                if (data.success && data.context?.cinematic_transitions?.length > 0) {
+                    const transitions = data.context.cinematic_transitions;
+                    console.log('🎬 Got', transitions.length, 'cinematic transitions, building story...');
+                    
+                    setIsPlaying(true);
+                    setCinematicReady(true);
+                    
+                    if (cinematicDirector.isReady) {
+                        cinematicDirector.buildStory(transitions);
+                        setStatus('🎬 Playing cinematic story...');
+                        return;
+                    } else {
+                        console.error('🎬 CinematicDirector not ready!');
+                    }
+                }
+            } catch (err) {
+                console.error('Failed to fetch cinematic transitions:', err);
+            }
+        }
+        
+        // Fallback: Legacy step-by-step playback
         if (timeline.length === 0) return;
         
+        console.log('🎬 Falling back to legacy step-by-step playback');
         setIsPlaying(true);
         let idx = 0;
         
@@ -119,7 +150,7 @@ const VisualExplanationPanelV2 = ({ width, height, code, steps, codeLines }) => 
         };
         
         playNext();
-    }, [timeline, goToStep]);
+    }, [timeline, goToStep, isConnected]);
 
     // Stop playback
     const stopPlayback = useCallback(() => {

@@ -145,7 +145,13 @@ class CinematicDirector {
             if (canvas) {
                 console.log('🎬 Appending canvas to container...');
                 container.appendChild(canvas);
+                // Force canvas to be visible
+                canvas.style.display = 'block';
+                canvas.style.visibility = 'visible';
+                canvas.style.opacity = '1';
                 console.log('🎬 Canvas appended, size:', canvas.width, 'x', canvas.height);
+                console.log('🎬 Canvas style:', canvas.style.cssText);
+                console.log('🎬 Container dimensions:', container.offsetWidth, 'x', container.offsetHeight);
             } else {
                 console.error('🎬❌ No canvas/view found on app!');
             }
@@ -195,6 +201,21 @@ class CinematicDirector {
         
         this.layers.background.removeChildren();
         this.layers.background.addChild(bg);
+        
+        // Add a debug indicator to confirm rendering works
+        const debugText = new PIXI.Text({
+            text: '🎬 Cinematic Director Ready',
+            style: {
+                fontFamily: 'JetBrains Mono, Consolas, monospace',
+                fontSize: 12,
+                fill: 0x4ade80,
+            }
+        });
+        debugText.x = 10;
+        debugText.y = height - 25;
+        debugText.alpha = 0.5;
+        debugText.name = 'debugIndicator';
+        this.layers.background.addChild(debugText);
     }
 
     resize(width, height) {
@@ -289,6 +310,7 @@ class CinematicDirector {
         console.log('🎬 Canvas size:', this.width, 'x', this.height);
         console.log('🎬 Layers.arrays exists:', !!this.layers.arrays);
         console.log('🎬 App stage children:', this.app?.stage?.children?.length);
+        console.log('🎬 App canvas attached:', !!this.app?.canvas?.parentNode);
         
         this.state.arrayName = arrayName;
         this.state.arrayValues = values;
@@ -311,7 +333,7 @@ class CinematicDirector {
         this.registry.arrayLabel.text = `${arrayName} =`;
         this.registry.arrayLabel.x = startX - 25;
         this.registry.arrayLabel.y = arrayY;
-        this.registry.arrayLabel.alpha = 0;
+        this.registry.arrayLabel.alpha = 1;  // START VISIBLE for debugging!
         
         // Create array elements
         this.registry.arrayElements = [];
@@ -319,11 +341,11 @@ class CinematicDirector {
             const elem = this.createArrayElement(val, idx, elemWidth, elemHeight);
             elem.x = startX + idx * (elemWidth + gap);
             elem.y = arrayY;
-            elem.alpha = 0;
-            elem.scale.set(0);
+            elem.alpha = 1;  // START VISIBLE for debugging!
+            elem.scale.set(1);  // START AT FULL SCALE for debugging!
             this.layers.arrays.addChild(elem);
             this.registry.arrayElements.push(elem);
-            console.log('🎬 Created element', idx, 'at', elem.x, elem.y, 'alpha=', elem.alpha);
+            console.log('🎬 Created element', idx, 'at', elem.x, elem.y, 'alpha=', elem.alpha, 'scale=', elem.scale.x);
         });
         
         console.log('🎬 Arrays layer children count:', this.layers.arrays.children.length);
