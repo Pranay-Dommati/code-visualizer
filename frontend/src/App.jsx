@@ -3,7 +3,11 @@ import TopBar from './components/TopBar';
 import CodeEditor from './components/CodeEditor';
 import InputModal from './components/InputModal';
 import ImmersiveVisualizer from './components/ImmersiveVisualizer';
+import LMSPanel from './components/LMSPanel';
 import './App.css';
+
+// V1 MODE: Toggle between code editor and LMS teaching mode
+const V1_MODE = true;
 
 const API_BASE_URL = 'http://localhost:5000/api';
 
@@ -33,6 +37,11 @@ function App() {
     const [showVisualizer, setShowVisualizer] = useState(false);
     const [isLoadingTrace, setIsLoadingTrace] = useState(false);
     const [loadingPhase, setLoadingPhase] = useState(0);
+
+    // V1 Teaching Mode state
+    const [introSpeech, setIntroSpeech] = useState('');
+    const [outroSpeech, setOutroSpeech] = useState('');
+    const [isTeachingLoading, setIsTeachingLoading] = useState(false);
 
     // Detect inputs in the code
     const detectInputs = useCallback(async (codeToCheck) => {
@@ -251,6 +260,56 @@ function App() {
         setShowVisualizer(false);
     }, []);
 
+    // V1 Mode: Handle Ask AI Teacher
+    const handleAskTeacher = useCallback(async (request) => {
+        console.log('=== ASK AI TEACHER ===', request);
+        setIsTeachingLoading(true);
+        setError(null);
+        setIntroSpeech('');
+        setOutroSpeech('');
+        setSteps([]);
+
+        try {
+            const response = await fetch(`${API_BASE_URL}/teacher/ask`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(request)
+            });
+
+            const data = await response.json();
+            console.log('Teacher response:', data);
+
+            if (data.success) {
+                // Set speech and code
+                setIntroSpeech(data.intro_speech || '');
+                setOutroSpeech(data.outro_speech || '');
+                setCode(data.code?.join('\n') || '');
+
+                // Transform steps for visualizer
+                const transformedSteps = (data.steps || []).map((step, idx) => ({
+                    lineNumber: step.line,
+                    code: step.code || '',
+                    explanation: step.explanation || '',
+                    variables: step.variables || {},
+                    changedVars: Object.keys(step.variables || {}),
+                    event: 'line',
+                    functionName: null,
+                    output: null
+                }));
+
+                setSteps(transformedSteps);
+                setShowVisualizer(true);
+            } else {
+                setError(data.error || 'Failed to get teaching response');
+            }
+        } catch (err) {
+            console.error('Ask teacher error:', err);
+            setError(`Connection error: ${err.message}`);
+        } finally {
+            setIsTeachingLoading(false);
+        }
+    }, []);
+
     // Get code lines for the visualizer
     const codeLines = code.split('\n');
 
@@ -259,20 +318,28 @@ function App() {
             <TopBar onUploadExample={handleUploadExample} />
 
             <main className="flex-1 flex items-center justify-center p-4 overflow-hidden min-h-0">
-                {/* Centered Code Editor */}
-                <div className="w-full max-w-3xl h-full">
-                    <CodeEditor
-                        code={code}
-                        setCode={setCode}
-                        onStartVisualization={handleStartVisualization}
-                        autoGenerateInput={autoGenerateInput}
-                        setAutoGenerateInput={setAutoGenerateInput}
-                        isRunning={isRunning}
-                        currentLine={null}
-                        error={error}
-                        isVisualizationActive={false}
+                {V1_MODE ? (
+                    /* V1 Mode: LMS Panel */
+                    <LMSPanel
+                        onAskTeacher={handleAskTeacher}
+                        isLoading={isTeachingLoading}
                     />
-                </div>
+                ) : (
+                    /* Legacy Mode: Code Editor */
+                    <div className="w-full max-w-3xl h-full">
+                        <CodeEditor
+                            code={code}
+                            setCode={setCode}
+                            onStartVisualization={handleStartVisualization}
+                            autoGenerateInput={autoGenerateInput}
+                            setAutoGenerateInput={setAutoGenerateInput}
+                            isRunning={isRunning}
+                            currentLine={null}
+                            error={error}
+                            isVisualizationActive={false}
+                        />
+                    </div>
+                )}
             </main>
 
             {/* Input Modal */}

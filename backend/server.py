@@ -35,6 +35,16 @@ except Exception as e:
     print(f"⚠ AI Narrator import failed: {e}")
     narrator = None
 
+# Import V1 Teaching Mode modules
+try:
+    from lms_context import get_courses, get_sections, get_lessons, get_lesson_context
+    from lesson_generator import generate_lesson_content, get_fallback_lesson
+    V1_TEACHING_AVAILABLE = True
+    print("✅ V1 Teaching Mode modules loaded")
+except Exception as e:
+    print(f"⚠ V1 Teaching Mode not available: {e}")
+    V1_TEACHING_AVAILABLE = False
+
 # Pydantic Models
 class CodeRequest(BaseModel):
     code: str
@@ -46,6 +56,14 @@ class CodeRequest(BaseModel):
 
 class DetectRequest(BaseModel):
     code: str
+
+# V1 Teaching Mode request model
+class TeachRequest(BaseModel):
+    course: str
+    section: str
+    lesson: str
+    language: str = "en"
+    user_question: str = "Explain this concept to me"
 
 # Lifespan for startup/shutdown
 @asynccontextmanager
@@ -569,6 +587,63 @@ async def teacher_chat(request: ChatRequest):
 async def teacher_speak(request: dict):
     """Legacy TTS endpoint."""
     return {"success": False, "error": "Use real-time WebSocket for audio."}
+
+# ============ V1 Teaching Mode Endpoints ============
+
+@app.get("/api/lms/courses")
+async def list_courses():
+    """List available courses."""
+    if not V1_TEACHING_AVAILABLE:
+        return {"success": False, "error": "V1 Teaching Mode not available"}
+    return {"success": True, "courses": get_courses()}
+
+@app.get("/api/lms/sections/{course_id}")
+async def list_sections(course_id: str):
+    """List sections for a course."""
+    if not V1_TEACHING_AVAILABLE:
+        return {"success": False, "error": "V1 Teaching Mode not available"}
+    return {"success": True, "sections": get_sections(course_id)}
+
+@app.get("/api/lms/lessons/{course_id}/{section_id}")
+async def list_lessons(course_id: str, section_id: str):
+    """List lessons for a section."""
+    if not V1_TEACHING_AVAILABLE:
+        return {"success": False, "error": "V1 Teaching Mode not available"}
+    return {"success": True, "lessons": get_lessons(course_id, section_id)}
+
+@app.post("/api/teacher/ask")
+async def teacher_ask(request: TeachRequest):
+    """
+    V1 Teaching Mode: Main teaching endpoint.
+    LLM generates intro, code, steps, and outro.
+    """
+    if not V1_TEACHING_AVAILABLE:
+        return {"success": False, "error": "V1 Teaching Mode not available"}
+    
+    # Get lesson context
+    lesson_context = get_lesson_context(request.course, request.section, request.lesson)
+    if not lesson_context:
+        return {"success": False, "error": f"Lesson not found: {request.lesson}"}
+    
+    print(f"🎓 Teaching request: {request.lesson} in {request.language}")
+    print(f"   Question: {request.user_question}")
+    
+    # Try LLM-generated content
+    result = await generate_lesson_content(
+        course=request.course,
+        section=request.section,
+        lesson=request.lesson,
+        language=request.language,
+        user_question=request.user_question,
+        lesson_context=lesson_context
+    )
+    
+    # Fall back to static content if LLM fails
+    if not result.get("success"):
+        print(f"⚠ LLM failed, using fallback for {request.lesson}")
+        result = get_fallback_lesson(request.lesson, request.language)
+    
+    return result
 
 # ============ Run Server ============
 
