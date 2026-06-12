@@ -1,0 +1,11 @@
+# Environments
+.env
+.env.*
+
+# Service Account Keys
+code-visualizer-keys.json
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
